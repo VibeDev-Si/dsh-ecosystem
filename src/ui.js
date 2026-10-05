@@ -228,7 +228,11 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
           registry,
           approvedBuilds: run.approved[row.entry.id],
           hooks: {
-            onStep: (s) => { row.sub = s === 'inspect' ? S.stInspect : s === 'install' ? S.stInstall : S.stEnable; run.log.push(`${s} ${E.specOf(row.entry)}`); upd() },
+            onStep: (s) => {
+              row.sub = s === 'inspect' ? S.stInspect : s === 'install' ? S.stInstall : s === 'disable-old' ? S.stOldOff : s === 'remove-old' ? S.stOldRemove : S.stEnable
+              row.late = s !== 'inspect' && s !== 'install' // past the install nothing can be cancelled, the switch steps included
+              run.log.push(`${s} ${s.endsWith('-old') ? row.legacy : E.specOf(row.entry)}`); upd()
+            },
             onRequest: (id) => { row.requestId = id },
           },
         })
@@ -447,12 +451,13 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
     const Row = (r) => h('div', { className: 'row3 ' + (r.st === 'skip' ? 'skip' : ''), key: r.entry.id }, Glyph(r.entry, 'gl'),
       h('div', { className: 'm' }, h('b', null, L(r.entry.name, lang)), ' ', h('span', { style: { color: 'var(--t2)', fontWeight: 400 } }, r.update ? `${r.update.from} → ${r.update.to}` : r.entry.version),
-        h('div', null, r.st === 'skip' ? S.alreadyInstalled : r.update ? S.afterUpdateRefresh : r.entry.npm)), stIcon(r))
+        h('div', null, r.st === 'skip' ? S.alreadyInstalled : r.update ? S.afterUpdateRefresh : r.legacy ? `${r.entry.npm} · ${S.replacesOld(r.legacy)}` : r.entry.npm)), stIcon(r))
 
     const Confirm = () => {
       const { rows, title, update } = modal
       const todo = rows.filter((r) => update || !(r.installed && r.enabled))
       const accts = update ? [] : todo.filter((r) => (r.entry.tags || []).includes('needsAccount'))
+      const switching = update ? [] : todo.filter((r) => r.legacy)
       return [
         h('div', { className: 'mh', key: 'h' }, h('h2', null, title), h('p', null, update ? S.willUpdateN(todo.length, sizeOf(todo.map((r) => r.entry))) : S.willInstallN(todo.length, rows.length - todo.length, sizeOf(todo.map((r) => r.entry))))),
         h('div', { className: 'mb', key: 'b' },
@@ -465,7 +470,10 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
             return h('div', { className: 'res warn', 'data-testid': 'cooldown-note' }, I.warn(), h('div', null, h('span', null, S.coolUpdate(fresh.map((r) => `${L(r.entry.name, lang)} ${r.entry.version}`).join(lang === 'zh' ? '\u3001' : ', '), end.toLocaleString()))))
           })(),
           accts.length ? h('div', { className: 'res warn' }, I.warn(), h('div', null, h('b', null, S.acctTitle), h('span', null, S.acctBody(accts.map((r) => L(r.entry.name, lang)).join(', '))))) : null,
-          h('details', null, h('summary', null, S.stepsH), h('div', { className: 'log' }, todo.map((r) => `1 inspect  ${E.specOf(r.entry)}\n2 ${update ? 'update ' : 'install'} enabled:false\n3 enable   -> applied`).join('\n\n') + '\n\n' + S.stepsFoot))),
+          switching.length ? h('div', { className: 'note', 'data-testid': 'switch-note' }, S.switchNote(switching.map((r) => r.legacy).join(', '))) : null,
+          h('details', null, h('summary', null, S.stepsH), h('div', { className: 'log' }, todo.map((r) => r.legacy && !update
+            ? `1 inspect  ${E.specOf(r.entry)}\n2 install enabled:false\n3 disable  ${r.legacy}\n4 enable   -> applied\n5 remove   ${r.legacy}`
+            : `1 inspect  ${E.specOf(r.entry)}\n2 ${update ? 'update ' : 'install'} enabled:false\n3 enable   -> applied`).join('\n\n') + '\n\n' + S.stepsFoot))),
         h('div', { className: 'mf', key: 'f' }, h('div', { className: 'grow' }, S.consent(update)), h('button', { className: 'btn', onClick: () => setModal(null) }, S.cancel),
           h('button', { className: 'btn primary big', 'data-testid': 'confirm', onClick: () => start(rows, title, update) }, S.confirmInstall(todo.length, update))),
       ]
@@ -479,7 +487,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         h('div', { className: 'mh', key: 'h' }, h('h2', null, `${S.installing}: ${run.title.replace(/^[^ ]+ /, '')}`), h('p', { 'data-testid': 'progress' }, run.settling ? S.settling : run.waiting ? S.waitingHost : S.progress(done, todo.length))),
         h('div', { className: 'mb', key: 'b' }, h('div', { className: 'bar' }, h('i', { style: { width: Math.min(pct, 100) + '%' } })), run.rows.map(Row),
           h('details', { open: true }, h('summary', null, S.logH), h('div', { className: 'log' }, run.log.join('\n')))),
-        h('div', { className: 'mf', key: 'f' }, h('div', { className: 'grow' }, run.cur && run.cur.sub === S.stEnable ? S.cancelHintLate : S.cancelHintOk), h('button', { className: 'btn', 'data-testid': 'cancel', disabled: !!(run.cur && run.cur.sub === S.stEnable), onClick: cancelRun }, S.cancelInstall)),
+        h('div', { className: 'mf', key: 'f' }, h('div', { className: 'grow' }, run.cur && run.cur.late ? S.cancelHintLate : S.cancelHintOk), h('button', { className: 'btn', 'data-testid': 'cancel', disabled: !!(run.cur && run.cur.late), onClick: cancelRun }, S.cancelInstall)),
       ]
     }
     const failText = (f) => {
@@ -500,21 +508,24 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const todo = run.rows.filter((r) => r.st !== 'skip')
       const done = todo.filter((r) => r.st === 'ok')
       const failedRow = run.rows.find((r) => r.st === 'err' || r.st === 'hold')
+      // An old package name that was switched off but could not be removed (the migrate banner offers to finish it).
+      const leftOld = (results || []).some((x) => x.legacyLeft) && h('div', { className: 'res warn', key: 'old', 'data-testid': 'legacy-left' }, I.warn(), h('div', null, h('span', null, S.migHalf)))
       let head, extra, acts, title
       if (!failed && !restart) {
         title = S.doneTitle
         head = h('div', { className: 'res ok' }, I.ok(), h('div', null, h('b', null, S.doneHead(done.length)), h('span', null, S.doneLoaded)))
         const ids = done.map((r) => r.entry.id)
-        extra = h('div', { className: 'next' }, h('b', null, S.nextH), h('ul', null,
+        extra = [leftOld, h('div', { className: 'next', key: 'next' }, h('b', null, S.nextH), h('ul', null,
           ids.includes('dsh-film') && h('li', { key: 1 }, S.nextFilm), ids.includes('dsh-media') && h('li', { key: 2 }, S.nextMedia),
           ids.includes('@vibedev-si/dsh-media-viewer') && h('li', { key: 3 }, S.nextViewer), ids.includes(MARKET) && h('li', { key: 4 }, S.nextMarket),
-          !marketIn && !ids.includes(MARKET) && h('li', { key: 5 }, S.nextMarketHint)))
+          !marketIn && !ids.includes(MARKET) && h('li', { key: 5 }, S.nextMarketHint)))]
         // No "reload the page" button, on purpose: the official Plugins page never reloads either (the host loads an
         // enabled plugin itself), and a reload pressed while the host was still applying the last change crashed a real user's boot.
         acts = h('button', { className: 'btn primary big', 'data-testid': 'done', onClick: () => setModal(null) }, S.gotIt)
       } else if (!failed && restart) {
         title = S.restartTitle
         head = h('div', { className: 'res warn' }, I.warn(), h('div', null, h('b', null, S.restartHead), h('span', null, S.restartBody(done.length))))
+        extra = leftOld
         acts = h('button', { className: 'btn primary big', onClick: () => setModal(null) }, S.gotIt)
       } else {
         title = S.failTitle
@@ -522,7 +533,10 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         const [t, b, tone] = failed?.status === 'cancelled' ? [S.cancelInstall, '', 'warn'] : failText(f)
         head = h('div', { className: 'res ' + tone, 'data-testid': 'fail', 'data-kind': f.kind }, tone === 'warn' ? I.warn() : I.err(), h('div', null, h('b', null, t), h('span', null, b)))
         extra = [
-          failed?.installedNotEnabled && h('div', { className: 'note', key: 1 }, S.installedNotEnabled),
+          // After a failed switch, turning the new one on by hand would run both: say what happened to the old one instead.
+          failed?.restoredOld ? h('div', { className: 'note', key: 1, 'data-testid': 'restored-old' }, S.migRestored)
+            : failed?.oldStillEnabled ? h('div', { className: 'note', key: 1, 'data-testid': 'old-still-on' }, S.oldStillOn(failedRow?.legacy ?? ''))
+            : failed?.installedNotEnabled && h('div', { className: 'note', key: 1 }, S.installedNotEnabled),
           h('div', { className: 'note', key: 2 }, (done.length ? S.keptDone(done.length) : '') + (f.kind === 'builds' ? S.noChangeHold : S.noChangeFail)),
           failed?.uncertain && h('div', { className: 'res warn', key: 3 }, I.warn(), h('div', null, h('b', null, S.uncertainT), h('span', null, S.uncertainB))),
         ]

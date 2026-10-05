@@ -50,6 +50,7 @@ export function createFakePm(initial = [], scenarios = {}, options = {}) {
       calls.push(['setBundleEnabled', name, enabled])
       const s = sc(name)
       if (s.enableFails && enabled) return ok({ changed: false, application: 'failed', stage: 'enable', target: name, error: { code: 'operation-error', diagnostic: 'could not load' } })
+      if (s.disableFails && !enabled) return ok({ changed: false, application: 'failed', stage: 'enable', target: name, error: { code: 'operation-error', diagnostic: 'could not unload' } })
       const b = bundles.get(name)
       if (!b) return { ok: false, error: { code: 'unknown-plugin', message: 'unknown plugin' } }
       b.enabled = enabled

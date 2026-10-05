@@ -56,12 +56,19 @@ function resolvePlan(catalog, wantedIds) {
   return out
 }
 
-/** Which of the planned plugins are already installed, by npm name. */
+/**
+ * Which of the planned plugins are already installed, by npm name. A row also names an installed package that is an
+ * older name of the plugin (`legacy`, with `legacyEnabled`), so installing it switches over instead of running both.
+ */
 function markInstalled(plan, bundles) {
   const have = new Map((bundles ?? []).filter((b) => b.installed).map((b) => [b.name, b]))
   return plan.map((p) => {
     const b = have.get(p.npm)
-    return { entry: p, installed: !!b, enabled: !!b?.enabled, installedVersion: b?.version }
+    const legacy = (p.legacyNames ?? []).find((name) => have.has(name))
+    return {
+      entry: p, installed: !!b, enabled: !!b?.enabled, installedVersion: b?.version,
+      ...(legacy ? { legacy, legacyEnabled: !!have.get(legacy).enabled } : {}),
+    }
   })
 }
 
@@ -210,6 +217,10 @@ function contrastRatio(fg, bg) {
  *   'failed'    with .failure = classifyFailure(...) or {kind:'refused'|'mismatch', ...}
  *   'cancelled'
  * `hooks.onStep(step)` is told 'inspect' | 'install' | 'enable' so the UI can show progress.
+ *
+ * When an older name of the plugin is installed (`state.legacy`, from markInstalled), turning the new one on switches
+ * over exactly as migrate() does: the steps 'disable-old' and 'remove-old' surround 'enable', a failed enable turns the
+ * old one back on (`restoredOld`), and an old one that could not be removed is reported as `legacyLeft`.
  */
 async function installOne(pm, entry, state, opts = {}) {
   const hooks = opts.hooks ?? {}
@@ -222,11 +233,9 @@ async function installOne(pm, entry, state, opts = {}) {
 
   if (!update && state?.installed && state?.enabled) return { status: 'skipped' }
   if (!update && state?.installed && !state?.enabled) {
-    step('enable')
-    const r = await pm.setBundleEnabled(entry.npm, true)
-    if (!r?.ok) return { status: 'failed', failure: { kind: 'failed', diagnostic: r?.error?.message ?? 'enable failed' } }
-    if (r.value?.application === 'failed') return { status: 'failed', failure: classifyFailure(r.value) }
-    return { status: r.value?.application === 'restart-required' ? 'restart' : 'enabledOnly' }
+    const on = await switchOn(pm, entry, state, step)
+    if (!on.ok) return { status: 'failed', ...on.failed }
+    return { status: on.value?.application === 'restart-required' ? 'restart' : 'enabledOnly', ...on.left }
   }
 
   step('inspect')
@@ -261,13 +270,39 @@ async function installOne(pm, entry, state, opts = {}) {
   // An update of something the user had switched off must stay off.
   if (update && state?.enabled === false) return { status: iv.application === 'restart-required' ? 'restart' : 'done' }
 
+  const on = await switchOn(pm, entry, update ? undefined : state, step)
+  if (!on.ok) return { status: 'failed', ...on.failed, installedNotEnabled: true }
+  // Replacing an already-installed package only loads the new code after a restart; say so even if the host stayed quiet.
+  const restart = iv.application === 'restart-required' || on.value?.application === 'restart-required' || update
+  return { status: restart ? 'restart' : 'done', ...on.left }
+}
+
+/**
+ * Enable an installed entry; with an older name of it installed, switch over in migrate()'s order (see installOne).
+ * -> {ok: true, value, left} | {ok: false, failed}, where `left` and `failed` are spread into installOne's answer.
+ */
+async function switchOn(pm, entry, state, step) {
+  const legacy = state?.legacy
+  if (legacy) {
+    step('disable-old')
+    // Two packages registering the same tools and services crash the plugin tree: the old one goes off first.
+    const off = await pm.setBundleEnabled(legacy, false)
+    if (!off?.ok) return { ok: false, failed: { failure: { kind: 'failed', diagnostic: off?.error?.message ?? 'could not disable the old package' }, oldStillEnabled: true } }
+    if (off.value?.application === 'failed') return { ok: false, failed: { failure: classifyFailure(off.value), oldStillEnabled: true } }
+  }
   step('enable')
   const en = await pm.setBundleEnabled(entry.npm, true)
-  if (!en?.ok) return { status: 'failed', failure: { kind: 'failed', diagnostic: en?.error?.message ?? 'enable failed' }, installedNotEnabled: true }
-  if (en.value?.application === 'failed') return { status: 'failed', failure: classifyFailure(en.value), installedNotEnabled: true }
-  // Replacing an already-installed package only loads the new code after a restart; say so even if the host stayed quiet.
-  const restart = iv.application === 'restart-required' || en.value?.application === 'restart-required' || update
-  return { status: restart ? 'restart' : 'done' }
+  if (!en?.ok || en.value?.application === 'failed') {
+    const failure = en?.ok ? classifyFailure(en.value) : { kind: 'failed', diagnostic: en?.error?.message ?? 'enable failed' }
+    if (!legacy || state.legacyEnabled === false) return { ok: false, failed: { failure } }
+    // Put the old one back so the user is not left with neither.
+    await pm.setBundleEnabled(legacy, true)
+    return { ok: false, failed: { failure, restoredOld: true } }
+  }
+  if (!legacy) return { ok: true, value: en.value, left: {} }
+  step('remove-old')
+  const rm = await pm.removeBundle(legacy)
+  return { ok: true, value: en.value, left: !rm?.ok || rm.value?.application === 'failed' ? { legacyLeft: legacy } : {} }
 }
 
 /**
@@ -426,7 +461,9 @@ const STR = {
     stepsFoot: '通过 VibeDev 官方插件管理器完成。只会处理上面列出的插件，之后可随时停用或卸载。',
     consent: (upd) => `点击「确认并${upd ? '更新' : '安装'}」即同意处理以上插件`,
     installing: '正在安装', progress: (d, n) => `${d} / ${n} 完成 · 请保持页面打开`,
-    stWait: '等待', stInspect: '检查中', stInstall: '下载与安装', stEnable: '启用', stDone: '已启用', stFail: '失败', stHold: '待你确认', stSkip: '已安装',
+    stWait: '等待', stInspect: '检查中', stInstall: '下载与安装', stEnable: '启用', stDone: '已启用', stFail: '失败', stHold: '待你确认', stSkip: '已安装', stOldOff: '停用旧包', stOldRemove: '卸载旧包',
+    replacesOld: (old) => `替换旧包 ${old}`,
+    switchNote: (olds) => `会替换旧包 ${olds}：新包装好后先停用旧包、再启用新包，新包启用成功后才卸载旧包；新包启用失败时会把旧包重新启用。`,
     logH: '安装日志', cancelInstall: '取消安装', cancelHintOk: '可以取消；已装好的插件会保留', cancelHintLate: '已进入应用阶段，无法取消',
     doneTitle: '安装完成', doneSub: (d, n) => `${d} / ${n} 个插件已装好`,
     doneHead: (d) => `已安装并启用 ${d} 个插件`, doneLoaded: '插件由 VibeDev 自己加载，通常几秒内就会出现，不需要刷新页面。如果过一会儿侧边栏仍没有变化，请完全退出并重新打开 VibeDev。',
@@ -457,6 +494,7 @@ const STR = {
     migrateOrder: '切换顺序：安装新包但先不启用 → 停用旧包 → 启用新包 → 确认可用后再卸载旧包。', migrateBtn: '一键切换',
     migrating: '正在切换', migDone: '已切换到新包，旧包已卸载。', migHalf: '已切换到新包；旧包已停用但没能卸载，可稍后在插件页手动卸载。',
     migRestored: '没能启用新包，已把旧包重新启用，你的功能不受影响。',
+    oldStillOn: (old) => `没能停用旧包 ${old}，所以新包装好后没有启用（两者不能同时启用）。可以稍后重试。`,
     halfRemovedT: '插件已被停用，但没有卸载干净', halfRemovedB: '它现在是「已停用、仍安装」的状态。可以重新启用，或解决问题后重试卸载。', reenable: '重新启用', retryUninstall: '重试卸载',
     communityEmptyT: '社区里有大量插件，需要先安装插件市场',
     communityEmptyB: '插件市场是社区维护的第三方插件（dshmarket，MIT 许可）。装好后，可以直接在这个标签页里浏览、搜索和安装社区插件。',
@@ -519,7 +557,9 @@ const STR = {
     stepsFoot: 'Done through the VibeDev plugin manager. Only the plugins listed above are touched, and you can disable or remove them any time.',
     consent: (upd) => `Clicking "Confirm and ${upd ? 'update' : 'install'}" means you agree to process the plugins above`,
     installing: 'Installing', progress: (d, n) => `${d} / ${n} done · keep this page open`,
-    stWait: 'Waiting', stInspect: 'Checking', stInstall: 'Downloading', stEnable: 'Enabling', stDone: 'Enabled', stFail: 'Failed', stHold: 'Needs your OK', stSkip: 'Installed',
+    stWait: 'Waiting', stInspect: 'Checking', stInstall: 'Downloading', stEnable: 'Enabling', stDone: 'Enabled', stFail: 'Failed', stHold: 'Needs your OK', stSkip: 'Installed', stOldOff: 'Disabling the old package', stOldRemove: 'Removing the old package',
+    replacesOld: (old) => `replaces ${old}`,
+    switchNote: (olds) => `Replaces the old package ${olds}: once the new one is installed, the old one is disabled and the new one enabled, and the old one is removed only after that worked; if the new one cannot be enabled, the old one is turned back on.`,
     logH: 'Install log', cancelInstall: 'Cancel install', cancelHintOk: 'You can cancel; plugins already installed are kept', cancelHintLate: 'Already applying, cannot cancel',
     doneTitle: 'Install complete', doneSub: (d, n) => `${d} / ${n} plugin(s) installed`,
     doneHead: (d) => `Installed and enabled ${d} plugin(s)`, doneLoaded: 'VibeDev loads them itself and they usually show up within seconds; there is no need to reload the page. If the sidebar still has not changed after a while, quit VibeDev completely and reopen it.',
@@ -550,6 +590,7 @@ const STR = {
     migrateOrder: 'Switch order: install the new one disabled → disable the old one → enable the new one → remove the old one once it works.', migrateBtn: 'Switch now',
     migrating: 'Switching', migDone: 'Switched to the new package and removed the old one.', migHalf: 'Switched to the new package; the old one is disabled but could not be removed, remove it later on the Plugins page.',
     migRestored: 'Could not enable the new package, so the old one was turned back on; nothing you use is affected.',
+    oldStillOn: (old) => `Could not disable the old package ${old}, so the new one was installed but not enabled (they cannot both be on). Try again later.`,
     halfRemovedT: 'The plugin was disabled but not fully removed', halfRemovedB: 'It is now "disabled but still installed". You can enable it again, or fix the cause and retry removal.', reenable: 'Enable again', retryUninstall: 'Retry removal',
     communityEmptyT: 'The community has a lot of plugins; install the plugin market first',
     communityEmptyB: 'The plugin market is a community-maintained third-party plugin (dshmarket, MIT). Once installed, you can browse, search and install community plugins right in this tab.',
@@ -800,7 +841,11 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
           registry,
           approvedBuilds: run.approved[row.entry.id],
           hooks: {
-            onStep: (s) => { row.sub = s === 'inspect' ? S.stInspect : s === 'install' ? S.stInstall : S.stEnable; run.log.push(`${s} ${E.specOf(row.entry)}`); upd() },
+            onStep: (s) => {
+              row.sub = s === 'inspect' ? S.stInspect : s === 'install' ? S.stInstall : s === 'disable-old' ? S.stOldOff : s === 'remove-old' ? S.stOldRemove : S.stEnable
+              row.late = s !== 'inspect' && s !== 'install' // past the install nothing can be cancelled, the switch steps included
+              run.log.push(`${s} ${s.endsWith('-old') ? row.legacy : E.specOf(row.entry)}`); upd()
+            },
             onRequest: (id) => { row.requestId = id },
           },
         })
@@ -1019,12 +1064,13 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
     const Row = (r) => h('div', { className: 'row3 ' + (r.st === 'skip' ? 'skip' : ''), key: r.entry.id }, Glyph(r.entry, 'gl'),
       h('div', { className: 'm' }, h('b', null, L(r.entry.name, lang)), ' ', h('span', { style: { color: 'var(--t2)', fontWeight: 400 } }, r.update ? `${r.update.from} → ${r.update.to}` : r.entry.version),
-        h('div', null, r.st === 'skip' ? S.alreadyInstalled : r.update ? S.afterUpdateRefresh : r.entry.npm)), stIcon(r))
+        h('div', null, r.st === 'skip' ? S.alreadyInstalled : r.update ? S.afterUpdateRefresh : r.legacy ? `${r.entry.npm} · ${S.replacesOld(r.legacy)}` : r.entry.npm)), stIcon(r))
 
     const Confirm = () => {
       const { rows, title, update } = modal
       const todo = rows.filter((r) => update || !(r.installed && r.enabled))
       const accts = update ? [] : todo.filter((r) => (r.entry.tags || []).includes('needsAccount'))
+      const switching = update ? [] : todo.filter((r) => r.legacy)
       return [
         h('div', { className: 'mh', key: 'h' }, h('h2', null, title), h('p', null, update ? S.willUpdateN(todo.length, sizeOf(todo.map((r) => r.entry))) : S.willInstallN(todo.length, rows.length - todo.length, sizeOf(todo.map((r) => r.entry))))),
         h('div', { className: 'mb', key: 'b' },
@@ -1037,7 +1083,10 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
             return h('div', { className: 'res warn', 'data-testid': 'cooldown-note' }, I.warn(), h('div', null, h('span', null, S.coolUpdate(fresh.map((r) => `${L(r.entry.name, lang)} ${r.entry.version}`).join(lang === 'zh' ? '\u3001' : ', '), end.toLocaleString()))))
           })(),
           accts.length ? h('div', { className: 'res warn' }, I.warn(), h('div', null, h('b', null, S.acctTitle), h('span', null, S.acctBody(accts.map((r) => L(r.entry.name, lang)).join(', '))))) : null,
-          h('details', null, h('summary', null, S.stepsH), h('div', { className: 'log' }, todo.map((r) => `1 inspect  ${E.specOf(r.entry)}\n2 ${update ? 'update ' : 'install'} enabled:false\n3 enable   -> applied`).join('\n\n') + '\n\n' + S.stepsFoot))),
+          switching.length ? h('div', { className: 'note', 'data-testid': 'switch-note' }, S.switchNote(switching.map((r) => r.legacy).join(', '))) : null,
+          h('details', null, h('summary', null, S.stepsH), h('div', { className: 'log' }, todo.map((r) => r.legacy && !update
+            ? `1 inspect  ${E.specOf(r.entry)}\n2 install enabled:false\n3 disable  ${r.legacy}\n4 enable   -> applied\n5 remove   ${r.legacy}`
+            : `1 inspect  ${E.specOf(r.entry)}\n2 ${update ? 'update ' : 'install'} enabled:false\n3 enable   -> applied`).join('\n\n') + '\n\n' + S.stepsFoot))),
         h('div', { className: 'mf', key: 'f' }, h('div', { className: 'grow' }, S.consent(update)), h('button', { className: 'btn', onClick: () => setModal(null) }, S.cancel),
           h('button', { className: 'btn primary big', 'data-testid': 'confirm', onClick: () => start(rows, title, update) }, S.confirmInstall(todo.length, update))),
       ]
@@ -1051,7 +1100,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         h('div', { className: 'mh', key: 'h' }, h('h2', null, `${S.installing}: ${run.title.replace(/^[^ ]+ /, '')}`), h('p', { 'data-testid': 'progress' }, run.settling ? S.settling : run.waiting ? S.waitingHost : S.progress(done, todo.length))),
         h('div', { className: 'mb', key: 'b' }, h('div', { className: 'bar' }, h('i', { style: { width: Math.min(pct, 100) + '%' } })), run.rows.map(Row),
           h('details', { open: true }, h('summary', null, S.logH), h('div', { className: 'log' }, run.log.join('\n')))),
-        h('div', { className: 'mf', key: 'f' }, h('div', { className: 'grow' }, run.cur && run.cur.sub === S.stEnable ? S.cancelHintLate : S.cancelHintOk), h('button', { className: 'btn', 'data-testid': 'cancel', disabled: !!(run.cur && run.cur.sub === S.stEnable), onClick: cancelRun }, S.cancelInstall)),
+        h('div', { className: 'mf', key: 'f' }, h('div', { className: 'grow' }, run.cur && run.cur.late ? S.cancelHintLate : S.cancelHintOk), h('button', { className: 'btn', 'data-testid': 'cancel', disabled: !!(run.cur && run.cur.late), onClick: cancelRun }, S.cancelInstall)),
       ]
     }
     const failText = (f) => {
@@ -1072,21 +1121,24 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const todo = run.rows.filter((r) => r.st !== 'skip')
       const done = todo.filter((r) => r.st === 'ok')
       const failedRow = run.rows.find((r) => r.st === 'err' || r.st === 'hold')
+      // An old package name that was switched off but could not be removed (the migrate banner offers to finish it).
+      const leftOld = (results || []).some((x) => x.legacyLeft) && h('div', { className: 'res warn', key: 'old', 'data-testid': 'legacy-left' }, I.warn(), h('div', null, h('span', null, S.migHalf)))
       let head, extra, acts, title
       if (!failed && !restart) {
         title = S.doneTitle
         head = h('div', { className: 'res ok' }, I.ok(), h('div', null, h('b', null, S.doneHead(done.length)), h('span', null, S.doneLoaded)))
         const ids = done.map((r) => r.entry.id)
-        extra = h('div', { className: 'next' }, h('b', null, S.nextH), h('ul', null,
+        extra = [leftOld, h('div', { className: 'next', key: 'next' }, h('b', null, S.nextH), h('ul', null,
           ids.includes('dsh-film') && h('li', { key: 1 }, S.nextFilm), ids.includes('dsh-media') && h('li', { key: 2 }, S.nextMedia),
           ids.includes('@vibedev-si/dsh-media-viewer') && h('li', { key: 3 }, S.nextViewer), ids.includes(MARKET) && h('li', { key: 4 }, S.nextMarket),
-          !marketIn && !ids.includes(MARKET) && h('li', { key: 5 }, S.nextMarketHint)))
+          !marketIn && !ids.includes(MARKET) && h('li', { key: 5 }, S.nextMarketHint)))]
         // No "reload the page" button, on purpose: the official Plugins page never reloads either (the host loads an
         // enabled plugin itself), and a reload pressed while the host was still applying the last change crashed a real user's boot.
         acts = h('button', { className: 'btn primary big', 'data-testid': 'done', onClick: () => setModal(null) }, S.gotIt)
       } else if (!failed && restart) {
         title = S.restartTitle
         head = h('div', { className: 'res warn' }, I.warn(), h('div', null, h('b', null, S.restartHead), h('span', null, S.restartBody(done.length))))
+        extra = leftOld
         acts = h('button', { className: 'btn primary big', onClick: () => setModal(null) }, S.gotIt)
       } else {
         title = S.failTitle
@@ -1094,7 +1146,10 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         const [t, b, tone] = failed?.status === 'cancelled' ? [S.cancelInstall, '', 'warn'] : failText(f)
         head = h('div', { className: 'res ' + tone, 'data-testid': 'fail', 'data-kind': f.kind }, tone === 'warn' ? I.warn() : I.err(), h('div', null, h('b', null, t), h('span', null, b)))
         extra = [
-          failed?.installedNotEnabled && h('div', { className: 'note', key: 1 }, S.installedNotEnabled),
+          // After a failed switch, turning the new one on by hand would run both: say what happened to the old one instead.
+          failed?.restoredOld ? h('div', { className: 'note', key: 1, 'data-testid': 'restored-old' }, S.migRestored)
+            : failed?.oldStillEnabled ? h('div', { className: 'note', key: 1, 'data-testid': 'old-still-on' }, S.oldStillOn(failedRow?.legacy ?? ''))
+            : failed?.installedNotEnabled && h('div', { className: 'note', key: 1 }, S.installedNotEnabled),
           h('div', { className: 'note', key: 2 }, (done.length ? S.keptDone(done.length) : '') + (f.kind === 'builds' ? S.noChangeHold : S.noChangeFail)),
           failed?.uncertain && h('div', { className: 'res warn', key: 3 }, I.warn(), h('div', null, h('b', null, S.uncertainT), h('span', null, S.uncertainB))),
         ]

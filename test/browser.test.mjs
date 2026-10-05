@@ -219,6 +219,26 @@ try {
     ok('failed migration puts the old package back (user is never left with neither)', await page.evaluate(() => window.__pm.bundles.get('dsh-media-viewer').enabled === true) && (await text(page)).includes('重新启用'))
     await shot(page, '14-migrate-restored'); await page.close()
   }
+  {
+    // The card's own Install (or a suite, or a prerequisite) while the old name is installed: the same switch, never both on.
+    const { page } = await boot({ initial: [{ name: 'dsh-media-viewer', version: '0.1.0' }, { name: 'dsh-better-sidebar', version: '0.24.1' }], delay: 20 })
+    await page.evaluate((id) => document.querySelector(`.card[data-id="${id}"] .btn.primary`).click(), MV); await page.waitForSelector('[data-testid=confirm]')
+    ok('install confirm says it replaces the old package', await page.evaluate(() => !!document.querySelector('[data-testid=switch-note]')) && (await text(page)).includes('替换旧包 dsh-media-viewer'))
+    await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
+    const seq = (await calls(page)).map((c) => c[0] + ':' + c[1] + (c[0] === 'setBundleEnabled' ? ':' + c[2] : ''))
+    const both = seq.indexOf(`setBundleEnabled:${MV}:true`) < seq.indexOf('setBundleEnabled:dsh-media-viewer:false')
+    ok('install: old off before new on, old removed after', !both && seq.indexOf(`setBundleEnabled:${MV}:true`) < seq.indexOf('removeBundle:dsh-media-viewer'), seq.join(' | '))
+    const state = await page.evaluate(() => ({ old: window.__pm.bundles.has('dsh-media-viewer'), nw: window.__pm.bundles.get('@vibedev-si/dsh-media-viewer') }))
+    ok('install: old package gone, new one on, no banner left', !state.old && state.nw?.enabled === true && await page.evaluate(() => !document.querySelector('[data-testid=migrate-banner]')))
+    await page.close()
+  }
+  {
+    const { page } = await boot({ initial: [{ name: 'dsh-media-viewer', version: '0.1.0' }, { name: 'dsh-better-sidebar', version: '0.24.1' }], scenarios: { [MV]: { enableFails: true } } })
+    await page.evaluate((id) => document.querySelector(`.card[data-id="${id}"] .btn.primary`).click(), MV); await page.waitForSelector('[data-testid=confirm]')
+    await click(page, '[data-testid=confirm]'); await page.waitForSelector('[data-testid=fail]', { timeout: 15000 })
+    ok('install switch that fails turns the old one back on and says so (not "enable it by hand")', await page.evaluate(() => window.__pm.bundles.get('dsh-media-viewer').enabled === true && !!document.querySelector('[data-testid=restored-old]')))
+    await page.close()
+  }
 
   // 10 ── updates
   {

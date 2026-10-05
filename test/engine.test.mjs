@@ -342,6 +342,64 @@ await t('legacy detection: only offered when the old name is actually installed'
   assert.equal(E.legacyInstalled(catalog, [{ name: MV, installed: true }]).length, 0)
 })
 
+// ── a plain install while the old name is installed switches over (card, suite or prerequisite) ─────
+const oldMV = (enabled = true) => [{ name: 'dsh-media-viewer', version: '0.1.0', enabled }, { name: 'dsh-better-sidebar', version: '0.24.1' }]
+const rowOf = (pm, id) => E.markInstalled(E.resolvePlan(catalog, [id]), [...pm.bundles.values()]).find((r) => r.entry.id === id)
+await t('switch: the plan row names the installed old package and whether it is on', () => {
+  const pm = createFakePm(oldMV(false))
+  const row = rowOf(pm, MV)
+  assert.equal(row.legacy, 'dsh-media-viewer'); assert.equal(row.legacyEnabled, false); assert.equal(row.installed, false)
+  assert.equal(rowOf(createFakePm([]), MV).legacy, undefined)
+})
+await t('switch: install never runs both — new installed off, old off, new on, THEN old removed', async () => {
+  const pm = createFakePm(oldMV())
+  const steps = []
+  const r = await E.installOne(pm, by(MV), rowOf(pm, MV), { hooks: { onStep: (s) => steps.push(s) } })
+  assert.equal(r.status, 'done'); assert.equal(r.legacyLeft, undefined)
+  const seq = pm.calls.map((c) => c[0] === 'installBundle' ? `${c[0]}:${c[1]}:${c[2].enabled}` : c[0] === 'setBundleEnabled' ? `${c[0]}:${c[1]}:${c[2]}` : `${c[0]}:${c[1]}`)
+  assert.deepEqual(seq, [`inspect:${E.specOf(by(MV))}`, `installBundle:${E.specOf(by(MV))}:false`, 'setBundleEnabled:dsh-media-viewer:false', `setBundleEnabled:${MV}:true`, 'removeBundle:dsh-media-viewer'])
+  assert.deepEqual(steps, ['inspect', 'install', 'disable-old', 'enable', 'remove-old'])
+  assert.equal(pm.bundles.has('dsh-media-viewer'), false); assert.equal(pm.bundles.get(MV).enabled, true)
+})
+await t('switch: if the new one cannot be enabled, the old one is turned back on', async () => {
+  const pm = createFakePm(oldMV(), { [MV]: { enableFails: true } })
+  const r = await E.installOne(pm, by(MV), rowOf(pm, MV))
+  assert.equal(r.status, 'failed'); assert.equal(r.restoredOld, true); assert.equal(r.installedNotEnabled, true)
+  assert.equal(pm.bundles.get('dsh-media-viewer').enabled, true, 'user must not be left with neither')
+  assert.ok(!pm.calls.some((c) => c[0] === 'removeBundle'))
+})
+await t('switch: an old package that was already off stays off when the new one fails', async () => {
+  const pm = createFakePm(oldMV(false), { [MV]: { enableFails: true } })
+  const r = await E.installOne(pm, by(MV), rowOf(pm, MV))
+  assert.equal(r.status, 'failed'); assert.equal(r.restoredOld, undefined)
+  assert.equal(pm.bundles.get('dsh-media-viewer').enabled, false)
+})
+await t('switch: if the old one cannot be disabled, the new one is left installed but OFF', async () => {
+  const pm = createFakePm(oldMV(), { 'dsh-media-viewer': { disableFails: true } })
+  const r = await E.installOne(pm, by(MV), rowOf(pm, MV))
+  assert.equal(r.status, 'failed'); assert.equal(r.oldStillEnabled, true)
+  assert.equal(pm.bundles.get(MV).enabled, false); assert.equal(pm.bundles.get('dsh-media-viewer').enabled, true)
+  assert.ok(!pm.calls.some((c) => c[0] === 'setBundleEnabled' && c[1] === MV))
+})
+await t('switch: an old package that could not be removed is reported, the new one stays live', async () => {
+  const pm = createFakePm(oldMV(), { 'dsh-media-viewer': { removeFailsLast: true } })
+  const r = await E.installOne(pm, by(MV), rowOf(pm, MV))
+  assert.equal(r.status, 'done'); assert.equal(r.legacyLeft, 'dsh-media-viewer')
+  assert.equal(pm.bundles.get(MV).enabled, true); assert.equal(pm.bundles.get('dsh-media-viewer').enabled, false)
+})
+await t('switch: new one installed but off, old one on -> the old one goes off before the new one comes on', async () => {
+  const pm = createFakePm([...oldMV(), { name: MV, version: by(MV).version, enabled: false }])
+  const r = await E.installOne(pm, by(MV), rowOf(pm, MV))
+  assert.equal(r.status, 'enabledOnly')
+  assert.deepEqual(pm.calls.map((c) => [c[0], c[1], c[2]].join(':')), ['setBundleEnabled:dsh-media-viewer:false', `setBundleEnabled:${MV}:true`, 'removeBundle:dsh-media-viewer:'])
+})
+await t('switch: an update never touches an old name (update rows do not carry one)', async () => {
+  const pm = createFakePm([...oldMV(), { name: MV, version: '0.1.0' }])
+  const r = await E.installOne(pm, by(MV), { installed: true, enabled: true, legacy: 'dsh-media-viewer', legacyEnabled: true }, { update: true })
+  assert.equal(r.status, 'restart')
+  assert.ok(!pm.calls.some((c) => c[1] === 'dsh-media-viewer'))
+})
+
 // ── uninstall: the non-atomic case that really happened ─────────────────────
 await t('uninstall: clean success', async () => {
   const pm = createFakePm([{ name: 'dsh-media', version: '0.1.3' }])

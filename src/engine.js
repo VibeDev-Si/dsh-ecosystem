@@ -47,12 +47,19 @@ export function resolvePlan(catalog, wantedIds) {
   return out
 }
 
-/** Which of the planned plugins are already installed, by npm name. */
+/**
+ * Which of the planned plugins are already installed, by npm name. A row also names an installed package that is an
+ * older name of the plugin (`legacy`, with `legacyEnabled`), so installing it switches over instead of running both.
+ */
 export function markInstalled(plan, bundles) {
   const have = new Map((bundles ?? []).filter((b) => b.installed).map((b) => [b.name, b]))
   return plan.map((p) => {
     const b = have.get(p.npm)
-    return { entry: p, installed: !!b, enabled: !!b?.enabled, installedVersion: b?.version }
+    const legacy = (p.legacyNames ?? []).find((name) => have.has(name))
+    return {
+      entry: p, installed: !!b, enabled: !!b?.enabled, installedVersion: b?.version,
+      ...(legacy ? { legacy, legacyEnabled: !!have.get(legacy).enabled } : {}),
+    }
   })
 }
 
@@ -201,6 +208,10 @@ export function contrastRatio(fg, bg) {
  *   'failed'    with .failure = classifyFailure(...) or {kind:'refused'|'mismatch', ...}
  *   'cancelled'
  * `hooks.onStep(step)` is told 'inspect' | 'install' | 'enable' so the UI can show progress.
+ *
+ * When an older name of the plugin is installed (`state.legacy`, from markInstalled), turning the new one on switches
+ * over exactly as migrate() does: the steps 'disable-old' and 'remove-old' surround 'enable', a failed enable turns the
+ * old one back on (`restoredOld`), and an old one that could not be removed is reported as `legacyLeft`.
  */
 export async function installOne(pm, entry, state, opts = {}) {
   const hooks = opts.hooks ?? {}
@@ -213,11 +224,9 @@ export async function installOne(pm, entry, state, opts = {}) {
 
   if (!update && state?.installed && state?.enabled) return { status: 'skipped' }
   if (!update && state?.installed && !state?.enabled) {
-    step('enable')
-    const r = await pm.setBundleEnabled(entry.npm, true)
-    if (!r?.ok) return { status: 'failed', failure: { kind: 'failed', diagnostic: r?.error?.message ?? 'enable failed' } }
-    if (r.value?.application === 'failed') return { status: 'failed', failure: classifyFailure(r.value) }
-    return { status: r.value?.application === 'restart-required' ? 'restart' : 'enabledOnly' }
+    const on = await switchOn(pm, entry, state, step)
+    if (!on.ok) return { status: 'failed', ...on.failed }
+    return { status: on.value?.application === 'restart-required' ? 'restart' : 'enabledOnly', ...on.left }
   }
 
   step('inspect')
@@ -252,13 +261,39 @@ export async function installOne(pm, entry, state, opts = {}) {
   // An update of something the user had switched off must stay off.
   if (update && state?.enabled === false) return { status: iv.application === 'restart-required' ? 'restart' : 'done' }
 
+  const on = await switchOn(pm, entry, update ? undefined : state, step)
+  if (!on.ok) return { status: 'failed', ...on.failed, installedNotEnabled: true }
+  // Replacing an already-installed package only loads the new code after a restart; say so even if the host stayed quiet.
+  const restart = iv.application === 'restart-required' || on.value?.application === 'restart-required' || update
+  return { status: restart ? 'restart' : 'done', ...on.left }
+}
+
+/**
+ * Enable an installed entry; with an older name of it installed, switch over in migrate()'s order (see installOne).
+ * -> {ok: true, value, left} | {ok: false, failed}, where `left` and `failed` are spread into installOne's answer.
+ */
+async function switchOn(pm, entry, state, step) {
+  const legacy = state?.legacy
+  if (legacy) {
+    step('disable-old')
+    // Two packages registering the same tools and services crash the plugin tree: the old one goes off first.
+    const off = await pm.setBundleEnabled(legacy, false)
+    if (!off?.ok) return { ok: false, failed: { failure: { kind: 'failed', diagnostic: off?.error?.message ?? 'could not disable the old package' }, oldStillEnabled: true } }
+    if (off.value?.application === 'failed') return { ok: false, failed: { failure: classifyFailure(off.value), oldStillEnabled: true } }
+  }
   step('enable')
   const en = await pm.setBundleEnabled(entry.npm, true)
-  if (!en?.ok) return { status: 'failed', failure: { kind: 'failed', diagnostic: en?.error?.message ?? 'enable failed' }, installedNotEnabled: true }
-  if (en.value?.application === 'failed') return { status: 'failed', failure: classifyFailure(en.value), installedNotEnabled: true }
-  // Replacing an already-installed package only loads the new code after a restart; say so even if the host stayed quiet.
-  const restart = iv.application === 'restart-required' || en.value?.application === 'restart-required' || update
-  return { status: restart ? 'restart' : 'done' }
+  if (!en?.ok || en.value?.application === 'failed') {
+    const failure = en?.ok ? classifyFailure(en.value) : { kind: 'failed', diagnostic: en?.error?.message ?? 'enable failed' }
+    if (!legacy || state.legacyEnabled === false) return { ok: false, failed: { failure } }
+    // Put the old one back so the user is not left with neither.
+    await pm.setBundleEnabled(legacy, true)
+    return { ok: false, failed: { failure, restoredOld: true } }
+  }
+  if (!legacy) return { ok: true, value: en.value, left: {} }
+  step('remove-old')
+  const rm = await pm.removeBundle(legacy)
+  return { ok: true, value: en.value, left: !rm?.ok || rm.value?.application === 'failed' ? { legacyLeft: legacy } : {} }
 }
 
 /**
