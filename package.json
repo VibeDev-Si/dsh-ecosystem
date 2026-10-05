@@ -1,0 +1,47 @@
+{
+  "name": "@vibedev-si/dsh-ecosystem",
+  "version": "0.1.0",
+  "description": "VibeDev 插件中心：集中了解、一键安装和管理 VibeDev 官方插件，支持套装、旧包名迁移，并可一键安装社区插件市场 · VibeDev Plugin Center: learn about, one-click install and manage the official VibeDev plugins, with suites, legacy-package migration, and a one-click install of the community plugin market",
+  "type": "module",
+  "main": "index.js",
+  "icon": "./icon.svg",
+  "files": [
+    "index.js",
+    "client.js",
+    "icon.svg",
+    "locale",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": { "default": "./client.js" },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "vibedev", "plugin-center", "installer", "suite"],
+  "author": "VibeDev",
+  "license": "MIT",
+  "homepage": "https://github.com/VibeDev-Si/dsh-ecosystem#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/VibeDev-Si/dsh-ecosystem.git" },
+  "bugs": { "url": "https://github.com/VibeDev-Si/dsh-ecosystem/issues" },
+  "engines": { "node": ">=20" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "validate": "node scripts/validate-catalog.mjs",
+    "validate:online": "node scripts/validate-catalog.mjs --online",
+    "test": "node scripts/build.mjs && node scripts/validate-catalog.mjs && node test/catalog.test.mjs && node test/engine.test.mjs && node test/host.test.mjs",
+    "test:browser": "node scripts/build.mjs && node test/browser.test.mjs",
+    "prepack": "node scripts/build.mjs"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-locale"]
+    }
+  }
+}

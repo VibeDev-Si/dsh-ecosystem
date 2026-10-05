@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 3 * * *' # daily: has any version in the catalog been withdrawn or changed on npm?
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Build, validate catalog, engine and host tests
+        run: npm test
+      - name: client.js is committed and up to date
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 22
+        shell: bash
+        run: |
+          node scripts/build.mjs
+          git diff --exit-code -- client.js || { echo "client.js is stale: run 'npm run build' and commit it"; exit 1; }
+
+  catalog-online:
+    name: every catalog entry exists on npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/validate-catalog.mjs --online
+
+  package:
+    name: package contents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tarball contains exactly the shipped files
+        shell: bash
+        run: |
+          node scripts/build.mjs
+          # --ignore-scripts: `prepack` rebuilds client.js and prints to stdout, which would corrupt the JSON
+          npm pack --dry-run --json --ignore-scripts > pack.json
+          node -e '
+            const files = require("./pack.json")[0].files.map(f => f.path).sort();
+            const want = ["LICENSE","README.md","client.js","cordis.patch.yml","icon.svg","index.js","locale/en.json","locale/zh.json","package.json"];
+            if (JSON.stringify(files) !== JSON.stringify(want)) { console.error("unexpected tarball contents:", files); process.exit(1) }
+            console.log("ok:", files.join(", "));
+          '

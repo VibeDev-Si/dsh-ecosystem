@@ -1,0 +1,211 @@
+{
+  "schema": 1,
+  "updated": "2026-10-05",
+  "suites": [
+    {
+      "id": "creator",
+      "name": { "zh": "AI 创作套装", "en": "AI Creator Suite" },
+      "tagline": {
+        "zh": "写剧本 → 排分镜 → 生成素材 → 预览成片素材，一套装齐",
+        "en": "Script → storyboard → generate assets → preview them, installed in one go"
+      },
+      "items": ["dsh-better-sidebar", "dsh-media", "dsh-film", "@vibedev-si/dsh-media-viewer"]
+    }
+  ],
+  "plugins": [
+    {
+      "id": "dsh-media",
+      "npm": "dsh-media",
+      "version": "0.1.3",
+      "origin": "official",
+      "role": "official",
+      "updates": "center",
+      "name": { "zh": "VibeDev 媒体生成", "en": "VibeDev Media" },
+      "tagline": {
+        "zh": "让 Agent 生成图片、视频、音乐和播客，并把语音转成文字",
+        "en": "Let the agent generate images, video, music and podcasts, and transcribe speech"
+      },
+      "does": {
+        "zh": [
+          "生成图片；带参考图时可改图、换风格",
+          "生成视频（后台运行，一般 1–10 分钟）",
+          "生成音乐（可自带歌词）或一期播客",
+          "把语音转成文字（目前只支持普通话）",
+          "查看可用模型、价格、任务和账号"
+        ],
+        "en": [
+          "Generate images; edit or restyle with reference images",
+          "Generate video (runs in the background, usually 1-10 minutes)",
+          "Generate music (with your own lyrics) or a podcast episode",
+          "Transcribe speech to text (Mandarin only for now)",
+          "List available models, prices, tasks and the signed-in account"
+        ]
+      },
+      "tags": ["official", "needsAccount", "paid"],
+      "requires": [],
+      "partners": ["dsh-film"],
+      "legacyNames": [],
+      "sizeKB": 328,
+      "capabilities": [
+        { "key": "network", "text": { "zh": "提示词和参考素材会发送到 VibeDev 网关，再转交模型服务商", "en": "Prompts and reference media are sent to the VibeDev gateway, which forwards them to the model provider" } },
+        { "key": "writeFiles", "text": { "zh": "生成结果保存在工作区的 media/ 目录", "en": "Results are saved under media/ in the workspace" } },
+        { "key": "credentials", "text": { "zh": "使用 VibeDev 登录账号；在 VibeDev 里无需再登录", "en": "Uses your VibeDev sign-in; no second login inside VibeDev" } },
+        { "key": "cost", "text": { "zh": "图片按张、视频按秒、音乐和播客按次计费；视频和音频失败不扣费，提交后的视频无法取消", "en": "Images per image, video per second, music and podcasts per request; failed video/audio is not charged and a submitted video cannot be cancelled" } }
+      ],
+      "links": { "repo": "https://github.com/CrisLIUning/dsh-media", "npm": "https://www.npmjs.com/package/dsh-media" },
+      "cmd": "dsh plugin add dsh-media",
+      "icon": { "glyph": { "zh": "媒", "en": "M" }, "grad": ["#ff8a5b", "#ff4f7a"] },
+      "reviewed": null,
+      "compat": null
+    },
+    {
+      "id": "dsh-film",
+      "npm": "dsh-film",
+      "version": "0.3.0",
+      "origin": "official",
+      "role": "official",
+      "updates": "center",
+      "name": { "zh": "VibeDev 影视工作台", "en": "VibeDev Film" },
+      "tagline": {
+        "zh": "在右侧栏写剧本、排分镜、调度导演台，Agent 用影视工具协同改片",
+        "en": "Write the script, board the shots and run the director desk in the right sidebar, with film tools for the agent"
+      },
+      "does": {
+        "zh": [
+          "剧本标签：Markdown 剧本，每次写入有版本记录，可单独撤回某次操作",
+          "分镜画布：节点式画布，可生成图片和视频（需要「VibeDev 媒体生成」）",
+          "导演台：在 3D 场景里调度人物与机位",
+          "Agent 影视工具 30 个，另带编剧技能 /film-screenwriting"
+        ],
+        "en": [
+          "Script tab: Markdown screenplay with a version record for every write; any single operation can be reverted",
+          "Storyboard canvas: node-based canvas that can generate images and video (needs VibeDev Media)",
+          "Director desk: stage characters and cameras in a 3D scene",
+          "30 film tools for the agent, plus the /film-screenwriting skill"
+        ]
+      },
+      "tags": ["official", "needsHost02"],
+      "requires": [],
+      "partners": ["dsh-media"],
+      "legacyNames": [],
+      "sizeKB": 12212,
+      "capabilities": [
+        { "key": "writeFiles", "text": { "zh": "项目是工作区 film/ 下的普通文件；升级和卸载插件不会改动它们", "en": "A project is plain files under film/ in the workspace; upgrading or removing the plugin does not touch them" } },
+        { "key": "agentTools", "text": { "zh": "为有影片的会话增加影视工具和说明，会占用部分上下文", "en": "Adds film tools and guidance to sessions with a film, using part of the context" } }
+      ],
+      "links": { "repo": "https://github.com/CrisLIUning/dsh-film", "npm": "https://www.npmjs.com/package/dsh-film" },
+      "cmd": "dsh plugin add dsh-film",
+      "icon": { "glyph": { "zh": "影", "en": "F" }, "grad": ["#6f7bff", "#a24dff"] },
+      "reviewed": null,
+      "compat": null
+    },
+    {
+      "id": "@vibedev-si/dsh-media-viewer",
+      "npm": "@vibedev-si/dsh-media-viewer",
+      "version": "0.1.0",
+      "origin": "official",
+      "role": "official",
+      "updates": "center",
+      "name": { "zh": "媒体预览与画廊", "en": "Media Viewer" },
+      "tagline": {
+        "zh": "在右侧栏直接预览视频、音频和 HTML，并按文件夹浏览媒体画廊",
+        "en": "Preview video, audio and HTML right in the sidebar, and browse a folder as a media gallery"
+      },
+      "does": {
+        "zh": [
+          "视频：可拖进度条、倍速、循环，不限文件大小",
+          "音频：实时频谱、倍速、循环",
+          "HTML：默认允许脚本，在隔离沙箱里运行；可看源码、切换手机/平板/桌面宽度",
+          "媒体画廊：缩略图、按类型筛选、搜索、灯箱浏览"
+        ],
+        "en": [
+          "Video: seekable, speed control, loop, no file-size cap",
+          "Audio: live spectrum, speed control, loop",
+          "HTML: scripts allowed by default, inside an isolated sandbox; view source, switch phone/tablet/desktop width",
+          "Media gallery: thumbnails, type filters, search, lightbox"
+        ]
+      },
+      "tags": ["official", "needsSidebar"],
+      "requires": ["dsh-better-sidebar"],
+      "partners": [],
+      "legacyNames": ["dsh-media-viewer"],
+      "sizeKB": 63,
+      "capabilities": [
+        { "key": "readFiles", "text": { "zh": "只读取当前会话工作目录内的文件", "en": "Reads only files inside the current session's working directory" } },
+        { "key": "localRoute", "text": { "zh": "在本机服务上增加 /mp 路由，仅回环地址可访问", "en": "Adds /mp routes to the local server, reachable from loopback only" } },
+        { "key": "pageScripts", "text": { "zh": "HTML 预览默认允许脚本，运行在无法访问界面的隔离沙箱中", "en": "HTML preview allows scripts by default, inside a sandbox that cannot reach the UI" } }
+      ],
+      "links": { "repo": "https://github.com/VibeDev-Si/dsh-media-viewer", "npm": "https://www.npmjs.com/package/@vibedev-si/dsh-media-viewer" },
+      "cmd": "dsh plugin add @vibedev-si/dsh-media-viewer",
+      "icon": { "glyph": { "zh": "览", "en": "V" }, "grad": ["#27c3d6", "#3b82f6"] },
+      "reviewed": null,
+      "compat": null
+    },
+    {
+      "id": "dsh-better-sidebar",
+      "npm": "dsh-better-sidebar",
+      "version": "0.24.1",
+      "origin": "community",
+      "role": "dependency",
+      "updates": "self",
+      "author": "omdsh-dev",
+      "name": { "zh": "Better Sidebar", "en": "Better Sidebar" },
+      "tagline": {
+        "zh": "文件树、编辑器、变更和侧边对话合在右侧一栏，也是「媒体预览」的前置依赖",
+        "en": "File tree, editor, changes and side chat in one right column; also the prerequisite of Media Viewer"
+      },
+      "does": {
+        "zh": ["把文件树、文本编辑器、Git 变更、任务和侧边对话放进右侧栏", "让其他插件注册新的右侧栏标签页和文件预览器"],
+        "en": ["Puts the file tree, text editor, Git changes, tasks and side chat in the right column", "Lets other plugins register new sidebar tabs and file viewers"]
+      },
+      "tags": ["community", "dependency"],
+      "requires": [],
+      "partners": [],
+      "legacyNames": [],
+      "sizeKB": 15138,
+      "sizeNote": { "zh": "15 MB · 30 个依赖", "en": "15 MB · 30 dependencies" },
+      "capabilities": [
+        { "key": "community", "text": { "zh": "由 omdsh-dev 维护，本中心不审查其代码", "en": "Maintained by omdsh-dev; this center does not review its code" } },
+        { "key": "fileAccess", "text": { "zh": "其 README 说明：文件接口不限制在工作区内，可访问你的用户有权限的任意路径", "en": "Its README states the file routes are not confined to the workspace and can reach any path your user can" } }
+      ],
+      "links": { "repo": "https://github.com/omdsh-dev/DSH-better-sidebar", "npm": "https://www.npmjs.com/package/dsh-better-sidebar" },
+      "cmd": "dsh plugin add dsh-better-sidebar",
+      "icon": { "glyph": { "zh": "栏", "en": "S" }, "grad": ["#7c8aa5", "#4c5a75"] },
+      "reviewed": null,
+      "compat": { "s": "likely", "why": { "zh": "在 VibeDev Next 里已能正常加载（本机观察，未做系统测试）", "en": "Loads fine in VibeDev Next (observed locally; not systematically tested)" } }
+    },
+    {
+      "id": "dshmarket",
+      "npm": "dshmarket",
+      "version": "1.66.8",
+      "origin": "community",
+      "role": "companion",
+      "updates": "self",
+      "author": "dsh-market",
+      "name": { "zh": "插件市场", "en": "Plugin Market" },
+      "tagline": {
+        "zh": "浏览、搜索并一键安装社区里的插件，也能管理更新和停用",
+        "en": "Browse, search and one-click install community plugins; also manages updates and disabling"
+      },
+      "does": {
+        "zh": ["浏览和搜索社区插件目录（数据来自 awesome-dsh-plugin）", "一键安装、更新、停用和卸载；多数插件刷新页面即可用", "插件分组与备注、备份与恢复插件清单、主题一键切换"],
+        "en": ["Browse and search the community catalog (data from awesome-dsh-plugin)", "One-click install, update, disable and uninstall; most plugins work after a page reload", "Plugin groups and notes, backup/restore of the plugin list, one-click themes"]
+      },
+      "tags": ["community", "companion"],
+      "requires": [],
+      "partners": [],
+      "legacyNames": [],
+      "sizeKB": 4155,
+      "capabilities": [
+        { "key": "network", "text": { "zh": "读取公共插件目录，并通过 pnpm 下载安装插件", "en": "Reads the public plugin catalog and downloads plugins through pnpm" } },
+        { "key": "writeConfig", "text": { "zh": "安装、启用、停用会修改你的插件配置文件", "en": "Installing, enabling and disabling modify your plugin configuration" } },
+        { "key": "community", "text": { "zh": "由 dsh-market 团队维护（MIT），本中心不审查其代码；其 README 声明不向任何地方上报数据", "en": "Maintained by the dsh-market team (MIT); this center does not review its code; its README states it reports no data anywhere" } }
+      ],
+      "links": { "repo": "https://github.com/dsh-market/dsh-market", "npm": "https://www.npmjs.com/package/dshmarket" },
+      "cmd": "dsh plugin add dshmarket",
+      "icon": { "glyph": { "zh": "市", "en": "P" }, "grad": ["#35b27e", "#1b7a57"] },
+      "reviewed": null,
+      "compat": { "s": "likely", "why": { "zh": "在 VibeDev Next 里已能正常加载（本机观察，未做系统测试）", "en": "Loads fine in VibeDev Next (observed locally; not systematically tested)" } }
+    }
+  ]
+}

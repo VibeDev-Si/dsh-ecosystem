@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>vdc bench</title>
+<style>html,body{margin:0;height:100%}#root{width:1180px;height:860px;position:relative}</style></head>
+<body><div id="root"></div>
+<script src="/vendor/react.js"></script>
+<script src="/vendor/react-dom.js"></script>
+<script>
+  // ── fake host context, mirroring what the real one exposes ──────────────────────────
+  window.__reg = { slots: [], injected: [], effects: [], locale: null };
+  window.__ModuleLoader__ = { load: function (def) { window.__def = def } };
+  window.__errors = [];
+  window.addEventListener('error', function (e) { window.__errors.push(String(e.message)) });
+  var oe = console.error; console.error = function () { window.__errors.push([].slice.call(arguments).join(' ')); oe.apply(console, arguments) };
+</script>
+<script src="/client.js"></script>
+<script>
+  var mod = window.__def.factory(function (name) { if (name === 'react') return window.React; throw new Error('unexpected require ' + name) });
+
+  // The test drives the engine through a fake pluginManager defined by the page that loads us.
+  window.setup = function (opts) {
+    opts = opts || {};
+    var calls = []; window.__calls = calls;
+    var fake = opts.fake;                         // a function name => impl map, built in the test
+    var listeners = [];
+    var ctx = {
+      effect: function (fn) { var r = fn(); window.__reg.effects.push(typeof r); return r },
+      locale: { register: function () { return function () {} }, bind: function () { return function (k) { return k } }, getLocale: function () { return { id: opts.locale || 'zh' } } },
+      slots: {
+        // The real host RUNS the callback; a generator callback yields its registrations (disposers).
+        inject: function (name, fn) {
+          window.__reg.injected.push(name);
+          var r = fn();
+          if (r && typeof r.next === 'function') { for (var s = r.next(); !s.done; s = r.next()) { /* each yield is a registration */ } }
+          return function () {};
+        },
+        register: function (decl, comp) { window.__reg.slots.push({ decl: decl, comp: comp }); return function () {} },
+      },
+      remote: { pluginManager: window.__pm, $on: function (ev, fn) { listeners.push([ev, fn]); return function () {} } },
+      reflect: { get: function (k) { return k === 'market' && opts.market ? { render: function () { return window.React.createElement('div', { 'data-testid': 'market-embed' }, 'EMBEDDED MARKET UI') } } : undefined } },
+    };
+    window.__ctx = ctx; window.__listeners = listeners;
+    mod.apply(ctx);
+    return true;
+  };
+  window.mountPanel = function () {
+    var s = window.__reg.slots.filter(function (x) { return x.decl && x.decl.name === 'main' })[0];
+    if (!s) throw new Error('main panel was not registered');
+    if (window.__root) window.__root.unmount();
+    window.__root = ReactDOM.createRoot(document.getElementById('root'));
+    window.__root.render(window.React.createElement(s.comp));
+  };
+</script>
+</body></html>

@@ -1,0 +1,5 @@
+# @vibedev-si/dsh-ecosystem bundle patch: one `insert` row mounting the plugin.
+# The entry `name` must equal the package name so the client-modules scan resolves ./client.
+- insert:
+    - id: vibedev-center
+      name: '@vibedev-si/dsh-ecosystem'

@@ -1,0 +1,38 @@
+name: Publish to npm
+
+# npm Trusted Publishing (OIDC): no long-lived npm token is stored in this repository.
+# One-time setup on npmjs.com -> package settings -> Trusted Publisher -> GitHub Actions:
+#   organization/user : VibeDev-Si   repository : dsh-ecosystem   workflow filename : publish.yml
+# The package must already exist on npm (the very first publish is manual).
+#
+# Release: bump "version" in package.json, run `npm run build`, commit, then
+#   git tag v<version> && git push origin v<version>
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Update npm (trusted publishing needs >= 11.5.1)
+        run: npm install -g npm@latest
+      - name: Tag must match package.json version
+        shell: bash
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          [ "$GITHUB_REF_NAME" = "$pkg" ] || { echo "tag $GITHUB_REF_NAME does not match package.json version $pkg"; exit 1; }
+      - name: Tests
+        run: npm test
+      - name: Publish
+        run: npm publish --provenance --access public
