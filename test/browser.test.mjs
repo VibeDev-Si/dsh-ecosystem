@@ -228,7 +228,7 @@ try {
     ok('card offers "update to 0.1.3"', (await text(page)).includes('更新到 0.1.3'))
     await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.warn').click())
     await page.waitForSelector('[data-testid=confirm]')
-    ok('update confirm shows from -> to and the fresh-release note', (await text(page)).includes('0.1.2 → 0.1.3') && (await text(page)).includes('这个版本刚发布'))
+    ok('update confirm shows from -> to and the plain reassurance (dsh-media 0.1.3 is long past its cooldown, so no warning)', (await text(page)).includes('0.1.2 → 0.1.3') && (await text(page)).includes('更新不会改动你的工作区里的项目文件') && !(await page.evaluate(() => !!document.querySelector('[data-testid=cooldown-note]'))))
     await shot(page, '15-update-confirm')
     await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
     ok('update installs the exact catalog version', (await calls(page)).some((c) => c[0] === 'installBundle' && c[1] === 'dsh-media@0.1.3'))
@@ -502,6 +502,138 @@ try {
     await page.waitForSelector('[data-testid=fail]', { timeout: 8000 })
     ok('a failed install shows its error at once, without the final wait', Date.now() - t0 < 3000, `${Date.now() - t0} ms`)
     await page.close()
+  }
+
+  // 19 ── "does the center itself have a newer version?": one read of npm, only when the user clicks
+  const SELF = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).version
+  const bumpPatch = (v, d) => { const [a, b, c] = v.split('.').map(Number); return a + '.' + b + '.' + (c + d) }
+  const NEWER = bumpPatch(SELF, 1)
+  const OLD_PUB = '2026-01-01T00:00:00.000Z'
+  const selfBanner = (page) => page.evaluate(() => { const el = document.querySelector('[data-testid=self-update]'); return el ? { kind: el.dataset.kind, text: el.innerText } : null })
+  const checkNow = async (page) => { await click(page, '[data-testid=check-update]'); await page.waitForFunction(() => { const el = document.querySelector('[data-testid=self-update]'); return el && el.dataset.kind !== 'checking' }, { timeout: 8000 }) }
+  {
+    benchState.latest = { ok: true, latest: NEWER, publishedAt: OLD_PUB, sources: [] }; benchState.latestHits = 0; benchState.latestDelay = 0
+    const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await sleep(3200)
+    ok('PRIVACY: just opening the center makes NO version request (nothing on load, nothing on a timer)', benchState.latestHits === 0, 'hits=' + benchState.latestHits)
+    ok('the header shows which version of the center is running', (await page.evaluate(() => document.querySelector('[data-testid=version]')?.textContent)) === 'v' + SELF)
+    ok('there is a "检查更新" button', (await page.evaluate(() => document.querySelector('[data-testid=check-update]')?.textContent)) === '检查更新')
+    await page.close()
+  }
+  {
+    benchState.latest = { ok: true, latest: NEWER, publishedAt: OLD_PUB, sources: [] }; benchState.latestHits = 0
+    const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await page.evaluate(() => { window.__copied = null; window.__opened = null; Object.defineProperty(navigator, 'clipboard', { value: { writeText: (x) => { window.__copied = x; return Promise.resolve() } }, configurable: true }); window.open = (u) => { window.__opened = u } })
+    await checkNow(page)
+    const b = await selfBanner(page)
+    ok('a newer version on npm is announced with both versions', b.kind === 'newer' && b.text.includes(NEWER) && b.text.includes(SELF), b.text.split('\n')[0])
+    ok('it says plainly that the center cannot update itself, and how to update', b.text.includes('不能给自己更新') && b.text.includes('卸载') && b.text.includes('完全退出并重新打开 VibeDev'))
+    ok('the package name shown includes the @vibedev-si/ scope (leaving it out is what a user tripped on)', (await page.evaluate(() => document.querySelector('[data-testid=self-pkg]').textContent)) === '@vibedev-si/dsh-ecosystem')
+    ok('an old release has NO cooldown warning', !(await page.evaluate(() => !!document.querySelector('[data-testid=self-cooldown]'))))
+    await click(page, '[data-testid=copy-self]'); await sleep(100)
+    ok('"复制包名" puts exactly the full package name on the clipboard', (await page.evaluate(() => window.__copied)) === '@vibedev-si/dsh-ecosystem')
+    ok('...and the button confirms it', (await page.evaluate(() => document.querySelector('[data-testid=copy-self]').textContent)) === '已复制')
+    await click(page, '[data-testid=view-self]')
+    ok('"查看这个版本" opens that exact tag in the repo', (await page.evaluate(() => window.__opened)) === 'https://github.com/VibeDev-Si/dsh-ecosystem/tree/v' + NEWER, await page.evaluate(() => window.__opened))
+    await shot(page, '26-self-update-newer')
+    await click(page, '.vdc [data-testid=self-update] .x'); await sleep(100)
+    ok('the × dismisses the banner', (await selfBanner(page)) === null)
+    await checkNow(page)
+    ok('checking again asks again (one request per click, nothing in between)', benchState.latestHits === 2, 'hits=' + benchState.latestHits)
+    await page.close()
+  }
+  {
+    // A release younger than a day: pnpm's cooldown. Pin the clock so this does not depend on when the test runs.
+    const pub = '2026-10-05T14:40:00.000Z'
+    benchState.latest = { ok: true, latest: NEWER, publishedAt: pub, sources: [] }
+    const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await page.evaluate((p) => { Date.now = () => Date.parse(p) + 2 * 3600 * 1000 }, pub)
+    await checkNow(page)
+    const endText = await page.evaluate((p) => new Date(Date.parse(p) + 24 * 3600 * 1000).toLocaleString(), pub)
+    const cd = await page.evaluate(() => document.querySelector('[data-testid=self-cooldown]')?.innerText || null)
+    ok('a release under a day old shows the cooldown warning', !!cd && cd.includes('pnpm') && cd.includes('可能被拦住'), cd)
+    ok('...with the exact time the cooldown ends', !!cd && cd.includes(endText), endText)
+    await shot(page, '27-self-update-cooldown')
+    await page.evaluate((p) => { Date.now = () => Date.parse(p) + 25 * 3600 * 1000 }, pub)
+    await click(page, '.vdc [data-testid=self-update] .x'); await checkNow(page)
+    ok('the same release a day later has no warning', !(await page.evaluate(() => !!document.querySelector('[data-testid=self-cooldown]'))))
+    await page.close()
+  }
+  {
+    benchState.latest = { ok: true, latest: SELF, publishedAt: OLD_PUB, sources: [] }
+    const { page } = await boot()
+    await checkNow(page); const b = await selfBanner(page)
+    ok('the same version says it is up to date', b.kind === 'same' && b.text.includes('已是最新版本') && b.text.includes(SELF), b.text)
+    await page.close()
+    benchState.latest = { ok: true, latest: bumpPatch(SELF, -1), publishedAt: OLD_PUB, sources: [] }
+    const q = await boot(); await checkNow(q.page); const c = await selfBanner(q.page)
+    ok('a LOWER version on npm (a local build) is never called "newer"', c.kind === 'ahead' && !c.text.includes('有新版本'), c.text)
+    await q.page.close()
+  }
+  {
+    // Failures must never be shown as "up to date".
+    const cases = [
+      ['both registries failed', { ok: false, sources: [{ registry: 'https://registry.npmjs.org/', error: 'timeout' }, { registry: 'https://registry.npmmirror.com/', error: 'HTTP 503' }] }],
+      ['the host route itself answered 500', 500],
+      ['the host route answered nonsense', { hello: 'world' }],
+    ]
+    for (const [name, answer] of cases) {
+      benchState.latest = answer
+      const { page } = await boot()
+      await checkNow(page); const b = await selfBanner(page)
+      ok('failure "' + name + '": reported as unavailable, NEVER as up to date', b.kind === 'unavailable' && b.text.includes('没能读取最新版本') && !b.text.includes('已是最新版本') && b.text.includes('这不代表你是最新的'), b.text.replace(/\n/g, ' | ').slice(0, 120))
+      if (typeof answer === 'object' && answer.sources) ok('...and names which registry failed and why', b.text.includes('registry.npmjs.org (timeout)') && b.text.includes('registry.npmmirror.com (HTTP 503)'))
+      await page.close()
+    }
+  }
+  {
+    // Hostile content in the answer must not reach the DOM or a link.
+    benchState.latest = { ok: true, latest: '9.9.9"><img src=x onerror="window.__pwned=1">', publishedAt: OLD_PUB, sources: [] }
+    const { page } = await boot()
+    await checkNow(page); await sleep(200)
+    ok('SAFETY: a hostile version string is refused, not rendered, and runs nothing', (await selfBanner(page)).kind === 'unavailable' && !(await page.evaluate(() => window.__pwned)) && !(await page.evaluate(() => !!document.querySelector('.vdc img'))))
+    await page.close()
+    benchState.latest = { ok: true, latest: NEWER, publishedAt: 'whenever <b>', sources: [] }
+    const q = await boot(); await checkNow(q.page)
+    ok('a garbage publish time is ignored: still announces the version, no warning, no crash', (await selfBanner(q.page)).kind === 'newer' && !(await q.page.evaluate(() => !!document.querySelector('[data-testid=self-cooldown]'))))
+    await q.page.close()
+  }
+  {
+    benchState.latest = { ok: true, latest: NEWER, publishedAt: OLD_PUB, sources: [] }; benchState.latestDelay = 500
+    const { page } = await boot()
+    await click(page, '[data-testid=check-update]'); await sleep(150)
+    ok('while checking: a spinner is shown and the button cannot be pressed twice', (await selfBanner(page))?.kind === 'checking' && (await page.evaluate(() => document.querySelector('[data-testid=check-update]').disabled)))
+    await page.waitForFunction(() => document.querySelector('[data-testid=self-update]')?.dataset.kind === 'newer', { timeout: 6000 })
+    benchState.latestDelay = 0; await page.close()
+  }
+  {
+    benchState.latest = { ok: true, latest: NEWER, publishedAt: OLD_PUB, sources: [] }
+    const { page } = await boot({ locale: 'en' })
+    const label = await page.evaluate(() => document.querySelector('[data-testid=check-update]').textContent)
+    await checkNow(page); const b = await selfBanner(page)
+    ok('English UI: button and banner are fully English', label === 'Check for updates' && b.kind === 'newer' && !/[\u4e00-\u9fff]/.test(b.text) && b.text.includes('cannot update itself') && b.text.includes('@vibedev-si/'), label + ' / ' + b.text.split('\n')[0])
+    await shot(page, '28-self-update-english'); await page.close()
+  }
+  {
+    // The update confirm: the old sentence claimed the center "installs the exact version". Say what is actually true.
+    const VIEWER = '@vibedev-si/dsh-media-viewer'
+    const pub = CATALOG.plugins.find((p) => p.id === VIEWER).publishedAt
+    const mk = async (offsetH) => {
+      const { page } = await boot({ initial: [{ name: VIEWER, version: '0.1.0' }, { name: 'dsh-better-sidebar', version: '0.24.1' }] })
+      await page.evaluate((p, h) => { Date.now = () => Date.parse(p) + h * 3600 * 1000 }, pub, offsetH)
+      await page.evaluate((id) => document.querySelector('.card[data-id="' + id + '"] .btn.warn').click(), VIEWER)
+      await page.waitForSelector('[data-testid=confirm]')
+      return page
+    }
+    const inside = await mk(2)
+    const endText = await inside.evaluate((p) => new Date(Date.parse(p) + 24 * 3600 * 1000).toLocaleString(), pub)
+    const note = await inside.evaluate(() => document.querySelector('[data-testid=cooldown-note]')?.innerText || null)
+    ok('update confirm inside the cooldown: names the plugin and version, explains the duplicate-rule risk, gives the end time', !!note && note.includes('媒体预览与画廊 0.1.1') && note.includes('同名') && note.includes('可能被拦住') && note.includes(endText), note)
+    ok('the old, inaccurate sentence is gone', !(await text(inside)).includes('会按确切版本安装'))
+    await shot(inside, '29-update-confirm-cooldown'); await inside.close()
+    const outside = await mk(25)
+    ok('update confirm after the cooldown: no warning, just the plain reassurance', !(await outside.evaluate(() => !!document.querySelector('[data-testid=cooldown-note]'))) && (await text(outside)).includes('更新不会改动你的工作区里的项目文件'))
+    await outside.close()
   }
 } catch (e) {
   ok('test run completed without throwing', false, String(e && e.stack || e))

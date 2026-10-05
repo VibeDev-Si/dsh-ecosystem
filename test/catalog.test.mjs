@@ -33,6 +33,10 @@ const cases = [
   ['http (not https) link', (c) => { c.plugins[0].links.repo = 'http://x.example' }],
   ['no capabilities listed', (c) => { c.plugins[0].capabilities = [] }],
   ['duplicate plugin', (c) => { c.plugins.push(structuredClone(c.plugins[0])) }],
+  ['publish time missing', (c) => { delete c.plugins[0].publishedAt }],
+  ['publish time not a date', (c) => { c.plugins[0].publishedAt = 'yesterday' }],
+  ['publish time without a timezone', (c) => { c.plugins[0].publishedAt = '2026-10-05T14:40:00' }],
+  ['publish time impossible', (c) => { c.plugins[0].publishedAt = '2026-13-45T99:99:99Z' }],
 ]
 let bad = 0
 for (const [name, m] of cases) {

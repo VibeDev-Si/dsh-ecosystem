@@ -79,6 +79,17 @@ function apply(ctx) {
     copy: function (t) { try { navigator.clipboard && navigator.clipboard.writeText(t); } catch (e) {} },
     // Test hook only: the real host never sets ctx.__vdcSettle, so production always uses the built-in timings.
     settle: function () { return ctx.__vdcSettle || null; },
+    // The version of THIS center, shown in the header and compared with npm's latest when the user clicks "check for updates".
+    version: function () { return VERSION; },
+    // One user-initiated read of npm's latest version, made by the host half (index.js /vdc/latest). Resolves to undefined on any failure.
+    checkLatest: function () {
+      var ctl = typeof AbortController === "function" ? new AbortController() : null;
+      var timer = ctl ? setTimeout(function () { ctl.abort(); }, 20000) : null;
+      return fetch("/vdc/latest", { cache: "no-store", signal: ctl ? ctl.signal : undefined })
+        .then(function (r) { return r.ok ? r.json() : undefined; })
+        .catch(function () { return undefined; })
+        .then(function (v) { if (timer) clearTimeout(timer); return v; });
+    },
     renderMarket: function () { try { var m = ctx.reflect && ctx.reflect.get && ctx.reflect.get("market"); return m && m.render ? m.render() : null; } catch (e) { return null; } }
   });
   var Panel = function () { return React.createElement(Center); };

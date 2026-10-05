@@ -8,7 +8,7 @@ const root = join(here, '..')
 const vendor = process.env.VENDOR_DIR ?? 'C:/Users/Administrator/AppData/Local/Temp/mv-harness/node_modules'
 
 /** Stand-in for the host half's /vdc routes: tests set `state.config`, and read the reports the client POSTs. */
-export const state = { config: { selfcheck: false, mount: false }, reports: [], configHits: 0 }
+export const state = { config: { selfcheck: false, mount: false }, reports: [], configHits: 0, latest: undefined, latestHits: 0, latestDelay: 0 }
 
 export function startBench(port) {
   const server = createServer((req, res) => {
@@ -20,6 +20,12 @@ export function startBench(port) {
     if (u.pathname === '/fake-pm.js') return send('text/javascript', readFileSync(join(here, 'fake-pm.js')))
     if (u.pathname === '/client.js') return send('text/javascript; charset=utf-8', readFileSync(join(root, 'client.js')))
     if (u.pathname === '/vdc/config') { state.configHits++; return send('application/json', JSON.stringify({ ok: true, ...state.config })) }
+    if (u.pathname === '/vdc/latest') {
+      // Scripted answer of the host half: tests set state.latest to an object (JSON) or a number (HTTP status).
+      state.latestHits++
+      const answer = () => { if (typeof state.latest === 'number') { res.writeHead(state.latest); res.end(); return } send('application/json', JSON.stringify(state.latest ?? { ok: false, sources: [] })) }
+      return state.latestDelay ? setTimeout(answer, state.latestDelay) : answer()
+    }
     if (u.pathname === '/vdc/selfcheck' && req.method === 'POST') {
       const chunks = []
       req.on('data', (c) => chunks.push(c))

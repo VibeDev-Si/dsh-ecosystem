@@ -114,6 +114,24 @@ export async function chooseRegistry(pm, probe, opts = {}) {
   } catch { return null }
 }
 
+/* ── "is there a newer version of the center itself?" ─────────────────────────────────────────────────────────
+ * The catalog is bundled in the package, so the center cannot learn about its own newer release from it. The host half
+ * reads npm once, only when the user asks (index.js /vdc/latest); this turns that answer into what the screen says.
+ * `answer` is the JSON of /vdc/latest, or undefined when the request itself failed.
+ *   -> {kind:'newer'|'same'|'ahead'|'unavailable', latest?, publishedAt?, sources?}                                    */
+export function judgeSelfUpdate(current, answer) {
+  // The host half already vets the version; this second check keeps a malformed one from ever reaching a link or the screen.
+  if (!answer || answer.ok !== true || typeof answer.latest !== 'string' || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(answer.latest)) return { kind: 'unavailable', sources: answer?.sources ?? [] }
+  const c = compareSemver(current, answer.latest)
+  return { kind: c < 0 ? 'newer' : c === 0 ? 'same' : 'ahead', latest: answer.latest, publishedAt: answer.publishedAt, from: answer.from, sources: answer.sources ?? [] }
+}
+
+/** pnpm holds back a version younger than 24 h. {active, endsAt} for an ISO publish time; never throws. */
+export function cooldownState(publishedAtIso, now = Date.now()) {
+  const endsAt = cooldownEnds(publishedAtIso)
+  return endsAt === undefined ? { active: false, endsAt: undefined } : { active: now < endsAt.getTime(), endsAt }
+}
+
 /* ── let the host finish applying a change before the next one, and before telling the user it is done ──────────
  * Every enable makes the host rebuild its module graph and push it to the open page. A real user installed the whole
  * suite (four enables in about 25 s) and pressed our "reload" button seconds after the last one: the booting page then

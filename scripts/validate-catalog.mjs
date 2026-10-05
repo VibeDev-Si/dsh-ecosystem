@@ -49,6 +49,8 @@ for (const p of catalog.plugins ?? []) {
   if (npmNames.has(p.npm)) err(`${w}: duplicate npm name`)
   npmNames.add(p.npm)
   if (!SEMVER.test(p.version ?? '')) err(`${w}: version must be an exact x.y.z, not a range or tag`)
+  // When this exact version reached npm. The update screens use it to warn about pnpm's one-day cooldown honestly.
+  if (typeof p.publishedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/.test(p.publishedAt) || Number.isNaN(Date.parse(p.publishedAt))) err(`${w}: publishedAt must be an ISO UTC time such as 2026-10-05T14:40:00.000Z`)
   if (!ORIGINS.has(p.origin)) err(`${w}: origin`)
   if (!ROLES.has(p.role)) err(`${w}: role`)
   if (!UPDATES.has(p.updates)) err(`${w}: updates`)
@@ -104,6 +106,9 @@ if (online) {
       const v = j.versions?.[p.version]
       if (!v) { err(`${p.id}: version ${p.version} does not exist on npm`); continue }
       if (!v.dsh?.bundle) err(`${p.id}@${p.version}: no dsh.bundle manifest, the plugin manager would refuse it`)
+      const npmTime = j.time?.[p.version]
+      if (!npmTime) err(`${p.id}@${p.version}: npm has no publish time for it`)
+      else if (new Date(npmTime).getTime() !== new Date(p.publishedAt).getTime()) err(`${p.id}@${p.version}: publishedAt ${p.publishedAt} differs from npm's ${new Date(npmTime).toISOString()}`)
       const size = Math.round((v.dist?.unpackedSize ?? 0) / 1024)
       if (size && Math.abs(size - p.sizeKB) / Math.max(size, 1) > 0.25) err(`${p.id}: sizeKB ${p.sizeKB} differs from npm unpackedSize ${size} KB by more than 25%`)
       console.log(`  ok  ${p.id}@${p.version}  (npm ${size} KB, latest ${j['dist-tags']?.latest})`)

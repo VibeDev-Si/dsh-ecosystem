@@ -157,6 +157,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const [menu, setMenu] = useState(null)
     const [modal, setModal] = useState(null) // {mode:'confirm'|'run'|'result'|'migrate'|'uninstall', ...}
     const aborter = useRef(null)
+    const [selfUpd, setSelfUpd] = useState(null) // null | {kind:'checking'} | judgeSelfUpdate(...)
+    const [copied, setCopied] = useState(false)
 
     const refresh = useCallback(async () => {
       if (!host.pm) { setBundles(false); return }
@@ -261,6 +263,14 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const toggle = async (p, on) => { setMenu(null); const r = await host.pm.setBundleEnabled(p.npm, on); await refresh(); return r }
 
     /* ── pieces ──────────────────────────────────────────────────────────── */
+    // "Is there a newer center?": one read of npm, made by the host half, only when the user clicks.
+    const checkSelf = async () => {
+      setSelfUpd({ kind: 'checking' })
+      const answer = await (host.checkLatest ? host.checkLatest() : Promise.resolve(undefined))
+      setSelfUpd(E.judgeSelfUpdate(host.version?.() ?? '0.0.0', answer))
+    }
+    const SELF_PKG = '@vibedev-si/dsh-ecosystem'
+    const copyPkg = () => { host.copy?.(SELF_PKG); setCopied(true); setTimeout(() => setCopied(false), 2000) }
     const stateBtn = (p) => {
       if (isIn(p)) {
         const on = isOn(p)
@@ -311,6 +321,27 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
             h('small', { key: 's' }, S.suiteWill(todo.length, items.length - todo.length, filmish ? '~12 MB' : S.sizeSmall))]
           : h('span', { className: 'btn ok big' }, I.check(), ' ', S.suiteDone)),
         h('div', { className: 'chips' }, chips))
+    }
+
+    const SelfUpdate = () => {
+      if (!selfUpd) return null
+      const cur = host.version?.() ?? ''
+      const close = h('button', { className: 'x', key: 'x', title: S.dismiss, onClick: () => setSelfUpd(null) }, '\u00d7')
+      const at = (d) => d.toLocaleString()
+      if (selfUpd.kind === 'checking') return h('div', { className: 'note', 'data-testid': 'self-update', 'data-kind': 'checking', style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 } }, h('span', { className: 'spin' }), S.checking)
+      if (selfUpd.kind === 'same' || selfUpd.kind === 'ahead') return h('div', { className: 'res ok', 'data-testid': 'self-update', 'data-kind': selfUpd.kind }, I.ok(), h('div', { style: { flex: 1 } }, h('span', null, selfUpd.kind === 'same' ? S.selfOk(cur) : S.selfAhead(cur, selfUpd.latest))), close)
+      if (selfUpd.kind === 'unavailable') {
+        const list = (selfUpd.sources || []).map((s) => { let host0 = s.registry; try { host0 = new URL(s.registry).host } catch { /* keep as is */ } return `${host0} (${s.error})` }).join(', ')
+        return h('div', { className: 'res warn', 'data-testid': 'self-update', 'data-kind': 'unavailable' }, I.warn(), h('div', { style: { flex: 1 } }, h('b', null, S.selfFailT), h('span', null, S.selfFailB(list))), close)
+      }
+      const cd = E.cooldownState(selfUpd.publishedAt)
+      return h('div', { className: 'res warn', 'data-testid': 'self-update', 'data-kind': 'newer' }, I.warn(), h('div', { style: { flex: 1 } },
+        h('b', null, S.selfNewT(selfUpd.latest, cur)), h('span', null, S.selfNewB),
+        h('pre', { className: 'cmd', 'data-testid': 'self-pkg' }, SELF_PKG),
+        cd.active && h('div', { className: 'note', 'data-testid': 'self-cooldown' }, S.selfCool(at(new Date(selfUpd.publishedAt)), at(cd.endsAt))),
+        h('div', { style: { display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' } },
+          h('button', { className: 'btn primary sm', 'data-testid': 'copy-self', onClick: copyPkg }, copied ? S.copiedPkg : S.copyPkg),
+          h('button', { className: 'btn sm', 'data-testid': 'view-self', onClick: () => host.openUrl?.(`https://github.com/VibeDev-Si/dsh-ecosystem/tree/v${selfUpd.latest}`) }, S.viewVersion))), close)
     }
 
     const Intro = () => h('div', { className: 'intro' },
@@ -411,7 +442,13 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         h('div', { className: 'mh', key: 'h' }, h('h2', null, title), h('p', null, update ? S.willUpdateN(todo.length, sizeOf(todo.map((r) => r.entry))) : S.willInstallN(todo.length, rows.length - todo.length, sizeOf(todo.map((r) => r.entry))))),
         h('div', { className: 'mb', key: 'b' },
           rows.map((r) => Row({ ...r, st: update || !(r.installed && r.enabled) ? 'wait-confirm' : 'skip', sub: '' })).map((el, i) => React.cloneElement(el, { key: i })),
-          update && h('div', { className: 'note' }, S.freshNote),
+          (() => {
+            if (!update) return null
+            const fresh = todo.filter((r) => E.cooldownState(r.entry.publishedAt).active)
+            if (!fresh.length) return h('div', { className: 'note' }, S.updateKeeps)
+            const end = new Date(Math.max(...fresh.map((r) => E.cooldownState(r.entry.publishedAt).endsAt.getTime())))
+            return h('div', { className: 'res warn', 'data-testid': 'cooldown-note' }, I.warn(), h('div', null, h('span', null, S.coolUpdate(fresh.map((r) => `${L(r.entry.name, lang)} ${r.entry.version}`).join(lang === 'zh' ? '\u3001' : ', '), end.toLocaleString()))))
+          })(),
           accts.length ? h('div', { className: 'res warn' }, I.warn(), h('div', null, h('b', null, S.acctTitle), h('span', null, S.acctBody(accts.map((r) => L(r.entry.name, lang)).join(', '))))) : null,
           h('details', null, h('summary', null, S.stepsH), h('div', { className: 'log' }, todo.map((r) => `1 inspect  ${E.specOf(r.entry)}\n2 ${update ? 'update ' : 'install'} enabled:false\n3 enable   -> applied`).join('\n\n') + '\n\n' + S.stepsFoot))),
         h('div', { className: 'mf', key: 'f' }, h('div', { className: 'grow' }, S.consent(update)), h('button', { className: 'btn', onClick: () => setModal(null) }, S.cancel),
@@ -514,12 +551,12 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     return h('div', { className: 'vdc', ref: rootRef, 'data-testid': 'center', onClick: () => menu && setMenu(null) },
       h('style', null, CSS),
       h('header', { className: 'top' },
-        h('div', { className: 'brand' }, h('div', { className: 'logo' }, I.logo()), h('h1', null, S.title), h('span', { className: 'pill' }, S.preview)),
+        h('div', { className: 'brand' }, h('div', { className: 'logo' }, I.logo()), h('h1', null, S.title), h('span', { className: 'pill' }, S.preview), host.version ? h('span', { className: 'pill', 'data-testid': 'version', title: S.title }, S.versionOf(host.version())) : null),
         h('nav', { className: 'tabs' }, [['all', S.tabAll, 0], ['installed', S.tabInstalled, counts.inst], ['updates', S.tabUpdates, counts.upd], ['community', S.tabCommunity, 0]].map(([k, t, c]) => h('button', { key: k, 'data-tab': k, className: 'tab ' + (view === k ? 'on' : ''), onClick: () => setView(k) }, t, c ? h('span', { className: 'n' }, c) : null))),
-        h('span', { className: 'sp' }), h('button', { className: 'ghost', onClick: () => setIntro(!intro) }, S.about)),
+        h('span', { className: 'sp' }), host.checkLatest ? h('button', { className: 'ghost', 'data-testid': 'check-update', disabled: selfUpd?.kind === 'checking', onClick: checkSelf }, S.checkUpdate) : null, h('button', { className: 'ghost', onClick: () => setIntro(!intro) }, S.about)),
       h('div', { className: 'scroll' }, h('div', { className: 'wrap' },
         bundles === false && h('div', { className: 'banner', 'data-testid': 'no-manager' }, I.warn(), h('div', { className: 'grow' }, h('b', null, S.loadFail), h('small', null, host.pm ? S.loadFailB : S.noManager))),
-        Banner(), Main(),
+        Banner(), SelfUpdate(), Main(),
         h('div', { className: 'foot' }, h('span', null, S.footMore, h('button', { className: 'lnk', onClick: () => (marketIn ? setView('community') : openInstall([MARKET], `${S.install} ${L(byId(MARKET).name, lang)}`)) }, marketIn ? S.openMarket.replace(' →', '') : S.installMarket.replace(' →', ''))),
           h('span', null, S.footFeedback, ' ', h('button', { className: 'lnk', onClick: () => host.openUrl?.('https://github.com/VibeDev-Si/dsh-ecosystem/issues') }, 'VibeDev-Si · GitHub')), h('span', null, S.footCatalog(catalog.updated))))),
       Drawer(),

@@ -12,6 +12,7 @@
 - **套装**：「AI 创作套装」= Better Sidebar + 媒体生成 + 影视工作台 + 媒体预览，一次装齐，已装的自动跳过。
 - **旧包名迁移**：发现旧包名（例如 `dsh-media-viewer`）时，按"新包装但不启用 → 停用旧包 → 启用新包 → 确认后卸载旧包"的顺序切换，避免两者同时启用互相冲突；失败时自动把旧包恢复，不会让你两个都没有。
 - **管理与更新**：停用、启用、卸载、更新；有新版本时按钮变"更新到 x"。
+- **插件中心自己的新版本**：点右上角「检查更新」，会告诉你有没有新版本。插件中心不能给自己更新，所以会给出完整包名和卸载重装的步骤；如果新版本发布不足一天，还会提示 pnpm 的冷却期可能让更新被拦住，并给出可以更新的时间。
 - **社区插件**：一键安装社区的插件市场 `dshmarket`，已装时在「社区插件」标签页里嵌入它的界面。本中心**只收录官方插件**，不替代插件市场。
 
 | 安装进度 | 失败也说清楚 |
@@ -41,10 +42,13 @@ VibeDev 桌面版的命令是 `vibedev-app plugin --profile desktop add @vibedev
 - 先**不启用**地安装，成功后再启用，所以失败不会留下半启用的插件。
 - 依赖需要执行构建脚本时，**停下来等你决定**，不会自动放行。
 - 社区插件（Better Sidebar、插件市场）只提供安装入口，并明确标注"本中心不审查其代码"。
-- 插件自身不联网、不上报任何数据，目录随包发布；安装时由官方插件管理器去访问 npm（并按官方插件页的做法，先问宿主哪个源最快）。
+- 插件默认**不联网**，目录随包发布，也不上报任何数据。**唯一的例外是你点「检查更新」时**：本机的 VibeDev 会去 npm 官方源和国内镜像各读一次本包的版本信息（只读、地址固定、不接受页面传入的任何参数，不发送 cookie 或任何关于你和你机器的信息；结果缓存一分钟，失败不缓存）。打开插件中心、放着不动都不会触发。安装插件时则由官方插件管理器去访问 npm（并按官方插件页的做法，先问宿主哪个源最快）。
+- 上游的能力扫描器（`dsh-trust-check`）认不出全局 `fetch`，所以它**不会**把上面这一条报成"网络"能力。这一点我们自己写明，不依赖扫描器。
 
 ## 已知情况
 
+- **「可更新」比的是插件中心自带的目录**，目录随插件中心的版本走。所以要先更新插件中心自己（点「检查更新」会提示），才会看到其他插件的新版本。
+- **更新同一个包的新版本，可能被 pnpm 的新版本冷却期拦住。** 每次显式安装，pnpm 通常会在 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 里追加一条同名规则，而它只认同名的第一条；新版本又不满一天时，更新会被拦住，并让所有插件的安装和卸载暂时失败。更新确认框和「检查更新」都会在这种情况下给出警告和可以更新的时间。
 - **一次装多个插件时，插件中心会在每个插件之间、以及全部装完之后，等 VibeDev 安静下来再继续。** 0.1.1 没有这样做，还多了一个「立即刷新页面」按钮；有用户在装完套装、紧接着点刷新后，桌面版启动时报「1 entry did not activate」。触发的确切原因没有被证实，但 0.1.2 去掉了刷新按钮并加了等待。若遇到类似的启动失败，请到 Issues 附上崩溃日志。
 
 - **更新已安装的插件需要重启 VibeDev** 才会加载新代码（官方插件管理器的行为），界面会这样提示。
@@ -54,7 +58,7 @@ VibeDev 桌面版的命令是 `vibedev-app plugin --profile desktop add @vibedev
 ## 开发
 
 ```sh
-npm test            # 构建 client.js、校验目录、目录变异测试、引擎、host 路由
+npm test            # 构建 client.js、校验目录、目录变异测试、引擎、host 路由、检查更新路由
 npm run test:browser  # 真实 Chrome 里驱动整个界面（需要 puppeteer-core 和本机 Chrome）
 npm run validate:online  # 核对目录里每个包@版本真的在 npm 上
 ```
@@ -75,7 +79,7 @@ npm run validate:online  # 核对目录里每个包@版本真的在 npm 上
 
 **@vibedev-si/dsh-ecosystem** is the VibeDev Plugin Center: a panel in the sidebar that explains the official VibeDev plugins (what they do, what they cost, what they read and write, what they need), installs them in one click (inspect → install disabled → enable, with prerequisites), offers a one-click "AI Creator Suite", migrates old package names safely, and installs the community plugin market on request. It lists **only official plugins** and does not replace the market.
 
-Because it can install other plugins, it is deliberately strict: it installs only catalog entries at their exact version; it blocks the install if the registry's answer does not match the catalog; it stops and asks before any dependency build script runs; and it sends no data anywhere.
+Because it can install other plugins, it is deliberately strict: it installs only catalog entries at their exact version; it blocks the install if the registry's answer does not match the catalog; it stops and asks before any dependency build script runs; and it sends no telemetry. It does not use the network on its own: the single exception is "Check for updates", which you click, and which makes the host read this one package's version information from the npm registry and the China mirror (read-only, fixed addresses, nothing from the page can change them, no cookies and no information about you or your machine; a success is cached for a minute). The upstream capability scanner does not recognise the global `fetch`, so it will not list this as a network capability; we state it here instead.
 
 Install by package name from your DSH plugin manager, or `dsh plugin --profile <name> add @vibedev-si/dsh-ecosystem`. The package name must include the `@vibedev-si/` scope (plain `dsh-ecosystem` does not exist). VibeDev loads the plugin itself, usually within seconds, so there is no need to reload the page; if the sidebar still has not changed after a while, quit VibeDev completely and reopen it. Updating an already-installed plugin needs a restart of VibeDev to load the new code.
 

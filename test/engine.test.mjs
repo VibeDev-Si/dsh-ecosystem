@@ -192,6 +192,33 @@ await t('waitQuiet: a host without events, or one that throws on subscribe, neve
   const b = Date.now(); await E.waitQuiet(() => { throw new Error('no events') }, { quietMs: 30, maxMs: 500 }); assert.ok(Date.now() - b < 300)
 })
 
+// ── self-update judgement and cooldown ──────────────────────────────────────────────────────────
+await t('self update: a higher version on npm is "newer", with its publish time', () => {
+  const j = E.judgeSelfUpdate('0.1.2', { ok: true, latest: '0.1.3', publishedAt: '2026-10-06T01:00:00.000Z', from: 'https://registry.npmjs.org/', sources: [] })
+  assert.equal(j.kind, 'newer'); assert.equal(j.latest, '0.1.3'); assert.equal(j.publishedAt, '2026-10-06T01:00:00.000Z')
+})
+await t('self update: the same version is "same"; a LOWER one on npm (a dev build) is "ahead", never "newer"', () => {
+  assert.equal(E.judgeSelfUpdate('0.1.3', { ok: true, latest: '0.1.3' }).kind, 'same')
+  assert.equal(E.judgeSelfUpdate('0.2.0', { ok: true, latest: '0.1.9' }).kind, 'ahead')
+  assert.equal(E.judgeSelfUpdate('0.1.10', { ok: true, latest: '0.1.9' }).kind, 'ahead', 'numeric, not string, comparison')
+})
+await t('self update: any failure is "unavailable", NEVER "same" (a failed check must not claim you are up to date)', () => {
+  for (const a of [undefined, null, { ok: false, sources: [{ registry: 'x', error: 'timeout' }] }, { ok: true }, { ok: true, latest: 5 }]) assert.equal(E.judgeSelfUpdate('0.1.2', a).kind, 'unavailable')
+  assert.deepEqual(E.judgeSelfUpdate('0.1.2', { ok: false, sources: [{ registry: 'x', error: 'timeout' }] }).sources, [{ registry: 'x', error: 'timeout' }])
+})
+await t('self update: a malformed or hostile version string is "unavailable", so it can never reach a link', () => {
+  for (const v of ['0.1.3; rm -rf /', 'javascript:alert(1)', '<b>x</b>', '1.2', 'latest', '../../x']) assert.equal(E.judgeSelfUpdate('0.1.2', { ok: true, latest: v }).kind, 'unavailable', v)
+})
+await t('cooldown: 24 h from the publish time, inclusive of the exact end', () => {
+  const pub = '2026-10-05T14:40:00.000Z'
+  assert.equal(E.cooldownState(pub, Date.parse('2026-10-06T14:39:59.000Z')).active, true)
+  assert.equal(E.cooldownState(pub, Date.parse('2026-10-06T14:40:00.000Z')).active, false)
+  assert.equal(E.cooldownState(pub, Date.parse('2026-10-05T14:40:01.000Z')).endsAt.toISOString(), '2026-10-06T14:40:00.000Z')
+})
+await t('cooldown: a missing or garbage time means "no warning", never a crash', () => {
+  for (const x of [undefined, null, '', 'soon']) assert.deepEqual(E.cooldownState(x), { active: false, endsAt: undefined })
+})
+
 await t('failure: enabling fails after a good install -> reported, and says it IS installed', async () => {
   const pm = createFakePm([], { 'dsh-media': { enableFails: true } })
   const r = await E.installOne(pm, by('dsh-media'), { installed: false })
