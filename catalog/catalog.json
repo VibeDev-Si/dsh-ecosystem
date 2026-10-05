@@ -52,7 +52,7 @@
         { "key": "credentials", "text": { "zh": "使用 VibeDev 登录账号；在 VibeDev 里无需再登录", "en": "Uses your VibeDev sign-in; no second login inside VibeDev" } },
         { "key": "cost", "text": { "zh": "图片按张、视频按秒、音乐和播客按次计费；视频和音频失败不扣费，提交后的视频无法取消", "en": "Images per image, video per second, music and podcasts per request; failed video/audio is not charged and a submitted video cannot be cancelled" } }
       ],
-      "links": { "repo": "https://github.com/CrisLIUning/dsh-media", "npm": "https://www.npmjs.com/package/dsh-media" },
+      "links": { "repo": "https://github.com/VibeDev-Si/dsh-media", "npm": "https://www.npmjs.com/package/dsh-media" },
       "cmd": "dsh plugin add dsh-media",
       "icon": { "glyph": { "zh": "媒", "en": "M" }, "grad": ["#ff8a5b", "#ff4f7a"] },
       "reviewed": null,
@@ -93,7 +93,7 @@
         { "key": "writeFiles", "text": { "zh": "项目是工作区 film/ 下的普通文件；升级和卸载插件不会改动它们", "en": "A project is plain files under film/ in the workspace; upgrading or removing the plugin does not touch them" } },
         { "key": "agentTools", "text": { "zh": "为有影片的会话增加影视工具和说明，会占用部分上下文", "en": "Adds film tools and guidance to sessions with a film, using part of the context" } }
       ],
-      "links": { "repo": "https://github.com/CrisLIUning/dsh-film", "npm": "https://www.npmjs.com/package/dsh-film" },
+      "links": { "repo": "https://github.com/VibeDev-Si/dsh-film", "npm": "https://www.npmjs.com/package/dsh-film" },
       "cmd": "dsh plugin add dsh-film",
       "icon": { "glyph": { "zh": "影", "en": "F" }, "grad": ["#6f7bff", "#a24dff"] },
       "reviewed": null,
