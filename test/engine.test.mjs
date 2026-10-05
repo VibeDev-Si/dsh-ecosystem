@@ -124,6 +124,48 @@ await t('with no chosen registry, the host default (null) is used for inspect', 
   await E.installOne(pm, by('dsh-media'), { installed: false })
   assert.equal(pm.calls.find((c) => c[0] === 'inspect')[2].registry, null)
 })
+// ── registry choice: the official page's rule ───────────────────────────────────────────────────
+const MIRROR = 'https://registry.npmmirror.com/'
+const probeOf = (value, ok = true) => { const p = { calls: 0, async fastest() { p.calls++; return { ok, value } } }; return p }
+await t('registry: default is the official registry and the mirror is fastest -> use the mirror', async () => {
+  const probe = probeOf(MIRROR)
+  assert.equal(await E.chooseRegistry(createFakePm(), probe), MIRROR); assert.equal(probe.calls, 1)
+})
+await t('registry: the official registry is fastest -> keep pnpm default (null)', async () => {
+  assert.equal(await E.chooseRegistry(createFakePm(), probeOf('https://registry.npmjs.org/')), null)
+})
+await t('registry: REAL CASE on this machine - pnpm already defaults to the mirror -> leave it alone and do not even probe', async () => {
+  const probe = probeOf(MIRROR)
+  const pm = createFakePm([], {}, { resolved: 'https://registry.npmmirror.com' })
+  assert.equal(await E.chooseRegistry(pm, probe), null); assert.equal(probe.calls, 0)
+})
+await t('registry: a probe that fails, throws or is absent never blocks and never breaks anything', async () => {
+  assert.equal(await E.chooseRegistry(createFakePm(), probeOf(null, false)), null)
+  assert.equal(await E.chooseRegistry(createFakePm(), { fastest: async () => { throw new Error('boom') } }), null)
+  assert.equal(await E.chooseRegistry(createFakePm(), undefined), null)
+  assert.equal(await E.chooseRegistry(undefined, probeOf(MIRROR)), null)
+})
+await t('registry: a probe that never answers is cut off (8 s in production, 50 ms here)', async () => {
+  const t0 = Date.now()
+  assert.equal(await E.chooseRegistry(createFakePm(), { fastest: () => new Promise(() => {}) }, { timeoutMs: 50 }), null)
+  assert.ok(Date.now() - t0 < 1500)
+})
+await t('registry: a custom (non-null) configured registry is never overridden', async () => {
+  const pm = createFakePm(); pm.registries = async () => ({ ok: true, value: { registry: 'https://corp.example/', fallbackRegistries: [MIRROR], resolved: 'https://corp.example/' } })
+  assert.equal(await E.chooseRegistry(pm, probeOf(MIRROR)), null)
+})
+
+// ── readable text on the host brand colour ──────────────────────────────────────────────────────
+await t('contrast: the real light-theme brand (#0f1115) gets white text', () => { assert.equal(E.readableTextOn('rgb(15, 17, 21)'), '#fff') })
+await t('contrast: a light brand (what a dark theme most likely uses) gets dark text', () => { assert.equal(E.readableTextOn('rgb(232, 234, 240)'), '#000'); assert.equal(E.readableTextOn('rgb(255, 255, 255)'), '#000') })
+await t('contrast: the choice always reaches WCAG AA (4.5:1) on black, white and mid colours alike', () => {
+  for (const [r, g, b] of [[0, 0, 0], [255, 255, 255], [15, 17, 21], [232, 234, 240], [111, 135, 255], [77, 107, 254], [128, 128, 128], [200, 40, 40], [40, 200, 90]]) {
+    const bg = `rgb(${r}, ${g}, ${b})`; const fg = E.readableTextOn(bg) === '#fff' ? 'rgb(255, 255, 255)' : 'rgb(0, 0, 0)'
+    assert.ok(E.contrastRatio(fg, bg) >= 4.5, `${bg} with ${fg} = ${E.contrastRatio(fg, bg)}`)
+  }
+})
+await t('contrast: an unparseable colour falls back to white instead of throwing', () => { assert.equal(E.readableTextOn('var(--x)'), '#fff'); assert.equal(E.readableTextOn(undefined), '#fff') })
+
 await t('failure: enabling fails after a good install -> reported, and says it IS installed', async () => {
   const pm = createFakePm([], { 'dsh-media': { enableFails: true } })
   const r = await E.installOne(pm, by('dsh-media'), { installed: false })

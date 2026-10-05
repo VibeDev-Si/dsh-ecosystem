@@ -59,22 +59,21 @@ function PanelIcon(size) {
     h("path", { d: "M10 3H5a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h1a2 2 0 1 1 0 4H5a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h5v-2a2 2 0 1 1 4 0v2h5a2 2 0 0 0 2-2v-5h-2a2 2 0 1 1 0-4h2V5a2 2 0 0 0-2-2h-5v1a2 2 0 1 1-4 0z" }));
 }
 
+function currentLocale(ctx) { try { var l = ctx.locale.getLocale(); return (l && (l.active || l.id)) || "zh"; } catch (e) { return "zh"; } }
+
 function apply(ctx) {
+  // The registry probe is optional: the center works without it, so a missing service must not stop the plugin loading.
+  // (Reading it without declaring it throws "cannot get property ... without inject", seen in a live self-check.)
+  var probeHolder = { probe: undefined };
+  try { ctx.inject(["remote.pluginRegistryProbe"], function (scoped) { try { probeHolder.probe = scoped.remote.pluginRegistryProbe; } catch (e) {} }); } catch (e) {}
+
   var Center = createCenter(React, CATALOG, {
     get pm() { try { return ctx.remote.pluginManager; } catch (e) { return undefined; } },
     // The real getLocale() returns { active: "zh", locales: [...], revision } (read from a live self-check), not { id }.
-    locale: function () { try { var l = ctx.locale.getLocale(); return (l && (l.active || l.id)) || "zh"; } catch (e) { return "zh"; } },
+    locale: function () { return currentLocale(ctx); },
     onLocale: function (fn) { try { return ctx.locale.subscribe(fn); } catch (e) { return function () {}; } },
-    // The official Plugins page asks the host which registry answers fastest (matters a lot on mainland-China networks).
-    fastestRegistry: function () {
-      try {
-        var pr = ctx.remote.pluginRegistryProbe;
-        if (!pr || typeof pr.fastest !== "function") return Promise.resolve(null);
-        var ask = Promise.resolve(pr.fastest()).then(function (r) { return r && typeof r === "object" && "ok" in r ? (r.ok ? r.value : null) : r; });
-        var cap = new Promise(function (res) { setTimeout(function () { res(null); }, 8000); });
-        return Promise.race([ask, cap]).then(function (v) { return typeof v === "string" ? v : null; }, function () { return null; });
-      } catch (e) { return Promise.resolve(null); }
-    },
+    // Same rule as the official Plugins page: only consider the China mirror when pnpm defaults to the official registry.
+    chooseRegistry: function () { return E.chooseRegistry(ctx.remote.pluginManager, probeHolder.probe); },
     onChanged: function (fn) { try { return ctx.remote.$on("plugin-manager/changed", fn); } catch (e) { return function () {}; } },
     openUrl: function (u) { window.open(u, "_blank", "noopener"); },
     copy: function (t) { try { navigator.clipboard && navigator.clipboard.writeText(t); } catch (e) {} },
@@ -91,10 +90,11 @@ function apply(ctx) {
   ctx.slots.inject("sidebar.panellist", function () {
     return ctx.slots.register({
       name: "sidebar.panellist", id: PANEL_ID, order: 5,
-      label: function () { return "VibeDev"; }, locale: "vibedevCenter"
+      // Spelled out on purpose: a bare "VibeDev" sits next to the brand name and is easy to miss (a user did).
+      label: function () { return STR[pick(currentLocale(ctx))].title; }, locale: "vibedevCenter"
     }, function (p) { return PanelIcon((p && p.size) || 18); });
   });
-  setTimeout(function () { try { runSelfCheck(ctx, PANEL_ID, CATALOG, LOAD_ERRORS, VERSION); } catch (e) {} }, 2500);
+  setTimeout(function () { try { runSelfCheck(ctx, PANEL_ID, CATALOG, LOAD_ERRORS, VERSION, probeHolder, E.chooseRegistry, E); } catch (e) {} }, 2500);
 }
 
 module.exports = { inject: inject, apply: apply, name: ${JSON.stringify(ID)} };

@@ -26,8 +26,9 @@ export function createFakePm(initial = [], scenarios = {}, options = {}) {
       if (s.inspectThrows) return { ok: false, error: { code: 'rpc', message: 'connection lost' } }
       if (s.inspect) return ok(s.inspect)
       if (bundles.get(name)?.installed) return ok({ status: 'refused', problem: 'already-installed', reason: 'already installed' })
-      // The host answers with the registry that actually answered: the one it was asked first, else its default.
-      return ok({ status: 'accepted', kind: 'registry', name: s.nameOverride ?? name, version: s.versionOverride ?? version, bundle: s.notBundle ? false : true, registry: opts?.registry ?? 'https://registry.npmjs.org/' })
+      // The host answers with the registry that actually answered. For the default it answers null, NOT a url:
+      // seen in a live self-check ("registry": null).
+      return ok({ status: 'accepted', kind: 'registry', name: s.nameOverride ?? name, version: s.versionOverride ?? version, bundle: s.notBundle ? false : true, registry: opts?.registry ?? null })
     },
     async installBundle(spec, opts) {
       await wait()
@@ -66,7 +67,9 @@ export function createFakePm(initial = [], scenarios = {}, options = {}) {
     },
     async listBundles() { calls.push(['listBundles']); return ok([...bundles.values()].map((b) => ({ name: b.name, version: b.version, enabled: b.enabled, installed: b.installed, optional: false, removable: true, rows: [], overrides: [] }))) },
     async cancelInstall(requestId) { calls.push(['cancelInstall', requestId]); return ok({ status: 'cancelled' }) },
-    async registries() { calls.push(['registries']); return ok({ configured: ['https://registry.npmjs.org/', 'https://registry.npmmirror.com'], pnpm: null }) },
+    // The REAL shape (read from a live self-check): { registry, fallbackRegistries, resolved }.
+    // `resolved` defaults to the official registry; options.resolved = 'https://registry.npmmirror.com' reproduces a user whose pnpm already uses the mirror.
+    async registries() { calls.push(['registries']); return ok({ registry: null, fallbackRegistries: ['https://registry.npmmirror.com/'], resolved: options.resolved ?? 'https://registry.npmjs.org' }) },
   }
   return pm
 }

@@ -95,6 +95,52 @@ function cooldownEnds(publishedAtIso) {
 let seq = 0
 const newRequestId = () => `eco-${Date.now().toString(36)}-${(seq++).toString(36)}`
 
+/* ── registry choice: the same rule as the official Plugins page ─────────────────────────────
+ * The host's registries() answers { registry, fallbackRegistries, resolved }. The page only considers the
+ * China mirror when pnpm's own default resolves to the OFFICIAL npm registry (a user whose default is already
+ * a mirror is left alone), and then only switches to it when the host's probe says the mirror is the fastest. */
+const NPMJS = 'https://registry.npmjs.org/'
+const NPMMIRROR = 'https://registry.npmmirror.com/'
+const normReg = (u) => { try { const x = new URL(u); return `${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/?$/, '/')}` } catch { return undefined } }
+
+function eligibleMirror(regs) {
+  if (!regs || regs.registry !== null || regs.resolved == null) return undefined
+  if (normReg(regs.resolved) !== NPMJS) return undefined
+  return (regs.fallbackRegistries ?? []).find((r) => r === NPMMIRROR)
+}
+
+/** The registry to ask first, or null for "whatever pnpm is configured with". Never throws, never waits long. */
+async function chooseRegistry(pm, probe, opts = {}) {
+  const ms = opts.timeoutMs ?? 8000
+  const capped = (p) => { let t; return Promise.race([Promise.resolve(p), new Promise((r) => { t = setTimeout(() => r(undefined), ms) })]).finally(() => clearTimeout(t)) }
+  try {
+    const regs = await capped(pm?.registries?.())
+    if (!regs?.ok) return null
+    const mirror = eligibleMirror(regs.value)
+    if (!mirror || typeof probe?.fastest !== 'function') return null
+    const f = await capped(probe.fastest())
+    return f?.ok && f.value === mirror ? mirror : null
+  } catch { return null }
+}
+
+/* ── readable text on the host's brand colour ─────────────────────────────────────────────────
+ * The host's brand colour is near-black in the light theme and (very likely) light in the dark one, so a fixed
+ * white label on primary buttons would vanish. Pick whichever of black/white has the higher WCAG contrast. */
+function readableTextOn(bg) {
+  const m = /rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/.exec(String(bg ?? ''))
+  if (!m) return '#fff'
+  const [r, g, b] = [m[1], m[2], m[3]].map((v) => { const c = Number(v) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) })
+  const L = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#fff' : '#000'
+}
+function contrastRatio(fg, bg) {
+  const lum = (s) => { const m = /rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/.exec(s); if (!m) return undefined; const [r, g, b] = [m[1], m[2], m[3]].map((v) => { const c = Number(v) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }); return 0.2126 * r + 0.7152 * g + 0.0722 * b }
+  const a = lum(fg), b = lum(bg)
+  if (a === undefined || b === undefined) return undefined
+  const [hi, lo] = a >= b ? [a, b] : [b, a]
+  return (hi + 0.05) / (lo + 0.05)
+}
+
 /**
  * Install one entry: inspect -> install (not enabled) -> enable.
  * Never throws; always resolves to {status, ...}. status:
@@ -264,7 +310,7 @@ function legacyInstalled(catalog, bundles) {
   return out
 }
 
-const E = { specOf, resolvePlan, markInstalled, classifyFailure, cooldownEnds, installOne, installPlan, migrate, uninstall, pendingUpdates, compareSemver, legacyInstalled };
+const E = { specOf, resolvePlan, markInstalled, classifyFailure, cooldownEnds, eligibleMirror, chooseRegistry, readableTextOn, contrastRatio, installOne, installPlan, migrate, uninstall, pendingUpdates, compareSemver, legacyInstalled };
 /**
  * i18n for the center. Plain objects; the catalog carries its own zh/en text.
  * The host locale id looks like "zh" / "zh-CN" / "en" ...; anything starting with "zh" gets Chinese.
@@ -475,10 +521,10 @@ function createCenter(React, catalog, host) {
 position:relative;display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg);color:var(--t1);font:14px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
 .vdc *{box-sizing:border-box}.vdc button{font:inherit;color:inherit;cursor:pointer}.vdc svg{flex:none}
 .vdc .top{display:flex;align-items:center;gap:18px;padding:12px 24px;border-bottom:1px solid var(--b1);background:var(--bg);flex:none;flex-wrap:wrap}
-.vdc .brand{display:flex;align-items:center;gap:10px}.vdc .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand),#8f6bff);display:grid;place-items:center;color:#fff}
+.vdc .brand{display:flex;align-items:center;gap:10px}.vdc .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#4d6bfe,#8f6bff);display:grid;place-items:center;color:#fff}
 .vdc h1{font-size:16px;margin:0;font-weight:650}.vdc .pill{font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--b2);color:var(--t2)}
 .vdc .tabs{display:flex;gap:4px}.vdc .tab{border:0;background:transparent;padding:6px 12px;border-radius:8px;color:var(--t2);font-weight:550}
-.vdc .tab:hover{background:var(--l1)}.vdc .tab.on{background:var(--l2);color:var(--t1)}.vdc .tab .n{margin-left:5px;font-size:11px;padding:0 6px;border-radius:99px;background:var(--brand);color:#fff}
+.vdc .tab:hover{background:var(--l1)}.vdc .tab.on{background:var(--l2);color:var(--t1)}.vdc .tab .n{margin-left:5px;font-size:11px;padding:0 6px;border-radius:99px;background:var(--brand);color:var(--on-brand,#fff)}
 .vdc .sp{flex:1}.vdc .ghost{border:1px solid var(--b2);background:transparent;border-radius:8px;padding:6px 12px}.vdc .ghost:hover{background:var(--l1)}
 .vdc .scroll{flex:1;overflow:auto;min-height:0}.vdc .wrap{max-width:1060px;margin:0 auto;padding:20px 24px 56px}
 .vdc .banner{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;border:1px solid color-mix(in srgb,var(--warn) 45%,var(--b1));background:color-mix(in srgb,var(--warn) 9%,var(--bg));margin-bottom:16px}
@@ -494,7 +540,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 .vdc .chips{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}.vdc .chip{display:flex;align-items:center;gap:7px;padding:5px 10px 5px 6px;border-radius:99px;background:var(--bg);border:1px solid var(--b1);font-size:13px}
 .vdc .chip .st{width:7px;height:7px;border-radius:50%;background:var(--idle)}.vdc .chip.done .st{background:var(--ok)}.vdc .arrow{color:var(--idle)}
 .vdc .btn{border:1px solid var(--b2);background:var(--bg);padding:7px 14px;border-radius:9px;font-weight:600;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.vdc .btn:hover{background:var(--l1)}.vdc .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}.vdc .btn.primary:hover{filter:brightness(1.08)}
+.vdc .btn:hover{background:var(--l1)}.vdc .btn.primary{background:var(--brand);border-color:var(--brand);color:var(--on-brand,#fff)}.vdc .btn.primary:hover{filter:brightness(1.08)}
 .vdc .btn.big{padding:10px 20px}.vdc .btn.sm{padding:5px 9px}.vdc .btn[disabled]{opacity:.5;cursor:default}
 .vdc .btn.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--b1));background:color-mix(in srgb,var(--ok) 8%,var(--bg));pointer-events:none}
 .vdc .btn.warn{background:color-mix(in srgb,var(--warn) 14%,var(--bg));border-color:color-mix(in srgb,var(--warn) 50%,var(--b1));color:var(--warn)}.vdc .btn.idle{color:var(--t2)}
@@ -578,6 +624,25 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const S = STR[lang]
     const [, bumpLocale] = useState(0)
     useEffect(() => (host.onLocale ? host.onLocale(() => bumpLocale((n) => n + 1)) : undefined), [])
+    // Label colour on primary buttons: black or white, whichever reads on the host's CURRENT brand colour.
+    const rootRef = useRef(null)
+    useEffect(() => {
+      const el = rootRef.current
+      if (!el) return undefined
+      const apply = () => {
+        try {
+          const probe = document.createElement('span')
+          probe.style.cssText = 'position:absolute;width:0;height:0;background:var(--brand)'
+          el.appendChild(probe); const bg = getComputedStyle(probe).backgroundColor; el.removeChild(probe)
+          el.style.setProperty('--on-brand', E.readableTextOn(bg))
+        } catch { /* keep the CSS fallback */ }
+      }
+      apply()
+      const mo = typeof MutationObserver === 'function' ? new MutationObserver(apply) : null
+      if (mo) { mo.observe(document.documentElement, { attributes: true }); mo.observe(document.body, { attributes: true }) }
+      const timer = setInterval(apply, 1500) // themes that swap a stylesheet change no attribute
+      return () => { mo && mo.disconnect(); clearInterval(timer) }
+    }, [])
     const [bundles, setBundles] = useState(null) // null = loading, false = unavailable
     const [view, setView] = useState('all')
     const [intro, setIntro] = useState(true)
@@ -627,7 +692,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const upd = () => setModal({ mode: 'run', run: { ...run, rows: run.rows.map((r) => ({ ...r })) } })
       const todo = run.rows.filter((r) => r.st !== 'skip')
       // Like the official Plugins page: ask the host which registry answers fastest (it matters on mainland-China networks).
-      const registry = (await host.fastestRegistry?.()) ?? null
+      const registry = (await host.chooseRegistry?.()) ?? null
       run.log.push(`start: ${todo.length}`, `registry: ${registry || 'default'}`)
       const results = []
       for (const row of run.rows) {
@@ -665,7 +730,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 
     const doMigrate = async (x) => {
       setModal({ mode: 'migrate', x, phase: 'run', step: 'inspect' })
-      const registry = (await host.fastestRegistry?.()) ?? null
+      const registry = (await host.chooseRegistry?.()) ?? null
       const r = await E.migrate(host.pm, x.entry, x.legacy, { registry, hooks: { onStep: (s) => setModal((m) => (m && m.mode === 'migrate' ? { ...m, step: s } : m)) } })
       await refresh()
       setModal({ mode: 'migrate', x, phase: 'done', result: r })
@@ -928,7 +993,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const modalBody = !modal ? null : modal.mode === 'confirm' ? Confirm() : modal.mode === 'run' ? Run() : modal.mode === 'result' ? Result() : modal.mode === 'migrate' ? Migrate() : UninstallResult()
 
     const counts = { inst: official.filter(isIn).length, upd: updates.length }
-    return h('div', { className: 'vdc', 'data-testid': 'center', onClick: () => menu && setMenu(null) },
+    return h('div', { className: 'vdc', ref: rootRef, 'data-testid': 'center', onClick: () => menu && setMenu(null) },
       h('style', null, CSS),
       h('header', { className: 'top' },
         h('div', { className: 'brand' }, h('div', { className: 'logo' }, I.logo()), h('h1', null, S.title), h('span', { className: 'pill' }, S.preview)),
@@ -964,7 +1029,7 @@ function watchErrors() {
   return errs
 }
 
-async function runSelfCheck(ctx, panelId, catalog, errs, version) {
+async function runSelfCheck(ctx, panelId, catalog, errs, version, probeHolder, choose, E) {
   let cfg
   try {
     const r = await fetch('/vdc/config', { cache: 'no-store' })
@@ -987,16 +1052,16 @@ async function runSelfCheck(ctx, panelId, catalog, errs, version) {
 
   if (pm) {
     await safe('registries()', async () => { const r = await pm.registries(); return r && r.ok ? r.value : { ok: false, error: r && r.error } })
-    // The official page asks the host which registry answers fastest; so do we.
+    // Same decision the install flow makes: only considered when pnpm defaults to the official registry.
     let fastest = null
     await safe('registryProbe', async () => {
-      const pr = ctx.remote.pluginRegistryProbe
-      if (!pr || typeof pr.fastest !== 'function') return { present: false }
+      const pr = probeHolder && probeHolder.probe
+      if (!pr || typeof pr.fastest !== 'function') return { present: false, injected: !!(probeHolder && 'probe' in probeHolder) }
       const t0 = Date.now()
       const r = await pr.fastest()
-      fastest = r && typeof r === 'object' && 'ok' in r ? (r.ok ? r.value : null) : r
       return { present: true, ms: Date.now() - t0, raw: r }
     })
+    await safe('chooseRegistry', async () => { const t0 = Date.now(); fastest = await choose(pm, probeHolder && probeHolder.probe); return { chosen: fastest, ms: Date.now() - t0 } })
     await safe('listBundles', async () => {
       const r = await pm.listBundles()
       if (!r || !r.ok) return { ok: false, error: r && r.error }
@@ -1041,7 +1106,12 @@ async function runSelfCheck(ctx, panelId, catalog, errs, version) {
       add('theme.onPanel', read(el))
       add('theme.onBody', read(document.body))
       add('theme.onHtml', read(document.documentElement))
-      add('theme.resolved', { '--bg': cs.getPropertyValue('--bg').trim(), '--brand': cs.getPropertyValue('--brand').trim(), panelBackground: cs.backgroundColor, panelColor: cs.color, bodyBackground: getComputedStyle(document.body).backgroundColor })
+      add('theme.resolved', { '--bg': cs.getPropertyValue('--bg').trim(), '--brand': cs.getPropertyValue('--brand').trim(), '--on-brand': el.style.getPropertyValue('--on-brand'), panelBackground: cs.backgroundColor, panelColor: cs.color, bodyBackground: getComputedStyle(document.body).backgroundColor })
+      // The number that matters in a dark theme: can the label on a primary button actually be read?
+      const btn = el.querySelector('.btn.primary')
+      if (btn) { const bs = getComputedStyle(btn); add('theme.primaryButton', { color: bs.color, background: bs.backgroundColor, contrast: E && E.contrastRatio ? E.contrastRatio(bs.color, bs.backgroundColor) : null }) }
+      const label = (() => { try { return Array.from(document.querySelectorAll('aside *, nav *')).filter((n) => n.children.length === 0 && /VibeDev/.test(n.textContent || '')).map((n) => n.textContent.trim()).slice(0, 6) } catch { return null } })()
+      add('sidebar.labelsMentioningVibeDev', label)
       add('theme.hooks', {
         htmlClass: document.documentElement.className, htmlData: Object.assign({}, document.documentElement.dataset),
         bodyClass: document.body.className, bodyData: Object.assign({}, document.body.dataset),
@@ -1074,22 +1144,21 @@ function PanelIcon(size) {
     h("path", { d: "M10 3H5a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h1a2 2 0 1 1 0 4H5a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h5v-2a2 2 0 1 1 4 0v2h5a2 2 0 0 0 2-2v-5h-2a2 2 0 1 1 0-4h2V5a2 2 0 0 0-2-2h-5v1a2 2 0 1 1-4 0z" }));
 }
 
+function currentLocale(ctx) { try { var l = ctx.locale.getLocale(); return (l && (l.active || l.id)) || "zh"; } catch (e) { return "zh"; } }
+
 function apply(ctx) {
+  // The registry probe is optional: the center works without it, so a missing service must not stop the plugin loading.
+  // (Reading it without declaring it throws "cannot get property ... without inject", seen in a live self-check.)
+  var probeHolder = { probe: undefined };
+  try { ctx.inject(["remote.pluginRegistryProbe"], function (scoped) { try { probeHolder.probe = scoped.remote.pluginRegistryProbe; } catch (e) {} }); } catch (e) {}
+
   var Center = createCenter(React, CATALOG, {
     get pm() { try { return ctx.remote.pluginManager; } catch (e) { return undefined; } },
     // The real getLocale() returns { active: "zh", locales: [...], revision } (read from a live self-check), not { id }.
-    locale: function () { try { var l = ctx.locale.getLocale(); return (l && (l.active || l.id)) || "zh"; } catch (e) { return "zh"; } },
+    locale: function () { return currentLocale(ctx); },
     onLocale: function (fn) { try { return ctx.locale.subscribe(fn); } catch (e) { return function () {}; } },
-    // The official Plugins page asks the host which registry answers fastest (matters a lot on mainland-China networks).
-    fastestRegistry: function () {
-      try {
-        var pr = ctx.remote.pluginRegistryProbe;
-        if (!pr || typeof pr.fastest !== "function") return Promise.resolve(null);
-        var ask = Promise.resolve(pr.fastest()).then(function (r) { return r && typeof r === "object" && "ok" in r ? (r.ok ? r.value : null) : r; });
-        var cap = new Promise(function (res) { setTimeout(function () { res(null); }, 8000); });
-        return Promise.race([ask, cap]).then(function (v) { return typeof v === "string" ? v : null; }, function () { return null; });
-      } catch (e) { return Promise.resolve(null); }
-    },
+    // Same rule as the official Plugins page: only consider the China mirror when pnpm defaults to the official registry.
+    chooseRegistry: function () { return E.chooseRegistry(ctx.remote.pluginManager, probeHolder.probe); },
     onChanged: function (fn) { try { return ctx.remote.$on("plugin-manager/changed", fn); } catch (e) { return function () {}; } },
     openUrl: function (u) { window.open(u, "_blank", "noopener"); },
     copy: function (t) { try { navigator.clipboard && navigator.clipboard.writeText(t); } catch (e) {} },
@@ -1106,10 +1175,11 @@ function apply(ctx) {
   ctx.slots.inject("sidebar.panellist", function () {
     return ctx.slots.register({
       name: "sidebar.panellist", id: PANEL_ID, order: 5,
-      label: function () { return "VibeDev"; }, locale: "vibedevCenter"
+      // Spelled out on purpose: a bare "VibeDev" sits next to the brand name and is easy to miss (a user did).
+      label: function () { return STR[pick(currentLocale(ctx))].title; }, locale: "vibedevCenter"
     }, function (p) { return PanelIcon((p && p.size) || 18); });
   });
-  setTimeout(function () { try { runSelfCheck(ctx, PANEL_ID, CATALOG, LOAD_ERRORS, VERSION); } catch (e) {} }, 2500);
+  setTimeout(function () { try { runSelfCheck(ctx, PANEL_ID, CATALOG, LOAD_ERRORS, VERSION, probeHolder, E.chooseRegistry, E); } catch (e) {} }, 2500);
 }
 
 module.exports = { inject: inject, apply: apply, name: "@vibedev-si/dsh-ecosystem" };

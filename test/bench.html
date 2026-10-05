@@ -41,11 +41,17 @@
         },
         register: function (decl, comp) { window.__reg.slots.push({ decl: decl, comp: comp }); return function () {} },
       },
-      remote: {
+      // Like the real host: a service that was not declared in `inject` THROWS when read (seen in a live self-check).
+      remote: Object.defineProperties({
         pluginManager: window.__pm,
-        // The host's registry probe: answers { ok, value } like the other remote calls.
-        pluginRegistryProbe: opts.noProbe ? undefined : { fastest: function () { window.__probeCalls = (window.__probeCalls || 0) + 1; return Promise.resolve({ ok: true, value: opts.fastest === undefined ? 'https://registry.npmmirror.com' : opts.fastest }) } },
         $on: function (ev, fn) { listeners.push([ev, fn]); return function () {} },
+      }, {
+        pluginRegistryProbe: { enumerable: true, get: function () { throw new Error('cannot get property "remote.pluginRegistryProbe" without inject') } },
+      }),
+      // ctx.inject(names, cb): runs cb with a scoped ctx where the optional service is readable (when the host has it).
+      inject: function (names, cb) {
+        var probe = opts.noProbe ? undefined : { fastest: function () { window.__probeCalls = (window.__probeCalls || 0) + 1; return Promise.resolve({ ok: true, value: opts.fastest === undefined ? 'https://registry.npmmirror.com/' : opts.fastest }) } };
+        if (names.indexOf('remote.pluginRegistryProbe') >= 0 && probe) cb({ remote: { pluginRegistryProbe: probe } });
       },
       reflect: { get: function (k) { return k === 'market' && opts.market ? { render: function () { return window.React.createElement('div', { 'data-testid': 'market-embed' }, 'EMBEDDED MARKET UI') } } : undefined } },
     };

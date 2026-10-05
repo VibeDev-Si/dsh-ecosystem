@@ -17,7 +17,7 @@ export function watchErrors() {
   return errs
 }
 
-export async function runSelfCheck(ctx, panelId, catalog, errs, version) {
+export async function runSelfCheck(ctx, panelId, catalog, errs, version, probeHolder, choose, E) {
   let cfg
   try {
     const r = await fetch('/vdc/config', { cache: 'no-store' })
@@ -40,16 +40,16 @@ export async function runSelfCheck(ctx, panelId, catalog, errs, version) {
 
   if (pm) {
     await safe('registries()', async () => { const r = await pm.registries(); return r && r.ok ? r.value : { ok: false, error: r && r.error } })
-    // The official page asks the host which registry answers fastest; so do we.
+    // Same decision the install flow makes: only considered when pnpm defaults to the official registry.
     let fastest = null
     await safe('registryProbe', async () => {
-      const pr = ctx.remote.pluginRegistryProbe
-      if (!pr || typeof pr.fastest !== 'function') return { present: false }
+      const pr = probeHolder && probeHolder.probe
+      if (!pr || typeof pr.fastest !== 'function') return { present: false, injected: !!(probeHolder && 'probe' in probeHolder) }
       const t0 = Date.now()
       const r = await pr.fastest()
-      fastest = r && typeof r === 'object' && 'ok' in r ? (r.ok ? r.value : null) : r
       return { present: true, ms: Date.now() - t0, raw: r }
     })
+    await safe('chooseRegistry', async () => { const t0 = Date.now(); fastest = await choose(pm, probeHolder && probeHolder.probe); return { chosen: fastest, ms: Date.now() - t0 } })
     await safe('listBundles', async () => {
       const r = await pm.listBundles()
       if (!r || !r.ok) return { ok: false, error: r && r.error }
@@ -94,7 +94,12 @@ export async function runSelfCheck(ctx, panelId, catalog, errs, version) {
       add('theme.onPanel', read(el))
       add('theme.onBody', read(document.body))
       add('theme.onHtml', read(document.documentElement))
-      add('theme.resolved', { '--bg': cs.getPropertyValue('--bg').trim(), '--brand': cs.getPropertyValue('--brand').trim(), panelBackground: cs.backgroundColor, panelColor: cs.color, bodyBackground: getComputedStyle(document.body).backgroundColor })
+      add('theme.resolved', { '--bg': cs.getPropertyValue('--bg').trim(), '--brand': cs.getPropertyValue('--brand').trim(), '--on-brand': el.style.getPropertyValue('--on-brand'), panelBackground: cs.backgroundColor, panelColor: cs.color, bodyBackground: getComputedStyle(document.body).backgroundColor })
+      // The number that matters in a dark theme: can the label on a primary button actually be read?
+      const btn = el.querySelector('.btn.primary')
+      if (btn) { const bs = getComputedStyle(btn); add('theme.primaryButton', { color: bs.color, background: bs.backgroundColor, contrast: E && E.contrastRatio ? E.contrastRatio(bs.color, bs.backgroundColor) : null }) }
+      const label = (() => { try { return Array.from(document.querySelectorAll('aside *, nav *')).filter((n) => n.children.length === 0 && /VibeDev/.test(n.textContent || '')).map((n) => n.textContent.trim()).slice(0, 6) } catch { return null } })()
+      add('sidebar.labelsMentioningVibeDev', label)
       add('theme.hooks', {
         htmlClass: document.documentElement.className, htmlData: Object.assign({}, document.documentElement.dataset),
         bodyClass: document.body.className, bodyData: Object.assign({}, document.body.dataset),

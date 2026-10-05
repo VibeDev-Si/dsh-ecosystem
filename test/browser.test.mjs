@@ -16,7 +16,7 @@ const server = await startBench(4801)
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-first-run'], defaultViewport: { width: 1180, height: 860, deviceScaleFactor: 1.25 } })
 const MV = '@vibedev-si/dsh-media-viewer'
 
-async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false, noProbe = false, fastest } = {}) {
+async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false, noProbe = false, fastest, resolved, brand } = {}) {
   const page = await browser.newPage()
   const errs = []
   page.on('pageerror', (e) => errs.push(String(e)))
@@ -25,11 +25,12 @@ async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', ma
   page.on('response', (r) => { if (r.status() >= 400 && !/favicon\.ico/.test(r.url())) errs.push(`HTTP ${r.status()} ${r.url()}`) })
   await page.goto('http://127.0.0.1:4801/')
   if (dark) await page.evaluate(() => { const s = document.documentElement.style; const v = { '--dsw-alias-bg-base': '#16171b', '--dsw-alias-bg-layer-1': '#1e1f25', '--dsw-alias-bg-layer-2': '#272830', '--dsw-alias-bg-overlay': '#2a2b33', '--dsw-alias-border-l1': 'rgba(255,255,255,.09)', '--dsw-alias-border-l2': 'rgba(255,255,255,.18)', '--dsw-alias-brand-primary': '#6f87ff', '--dsw-alias-label-primary': '#ececf2', '--dsw-alias-label-secondary': '#9b9fae' }; for (const k in v) s.setProperty(k, v[k]); document.body.style.background = '#16171b' })
-  await page.evaluate(async (initial, scenarios, delay, locale, market, noProbe, fastest) => {
+  if (brand) await page.evaluate((b) => document.documentElement.style.setProperty('--dsw-alias-brand-primary', b), brand)
+  await page.evaluate(async (initial, scenarios, delay, locale, market, noProbe, fastest, resolved) => {
     const { createFakePm } = await import('/fake-pm.js')
-    window.__pm = createFakePm(initial, scenarios, { delay })
+    window.__pm = createFakePm(initial, scenarios, { delay, resolved })
     window.setup({ locale, market, noProbe, fastest }); window.mountPanel()
-  }, initial, scenarios, delay, locale, market, noProbe, fastest)
+  }, initial, scenarios, delay, locale, market, noProbe, fastest, resolved)
   await page.waitForSelector('[data-testid=center]')
   await sleep(150)
   return { page, errs }
@@ -300,7 +301,7 @@ try {
     const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
     await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
     const c = await calls(page)
-    ok('the fastest registry reported by the host is used for every inspect and install', c.filter((x) => x[0] === 'inspect' || x[0] === 'installBundle').every((x) => x[2].registry === 'https://registry.npmmirror.com'), JSON.stringify(c.filter((x) => x[0] === 'inspect').map((x) => x[2])))
+    ok('the fastest registry reported by the host is used for every inspect and install', c.filter((x) => x[0] === 'inspect' || x[0] === 'installBundle').every((x) => x[2].registry === 'https://registry.npmmirror.com/'), JSON.stringify(c.filter((x) => x[0] === 'inspect').map((x) => x[2])))
     ok('the probe is asked once per run, not once per plugin', (await page.evaluate(() => window.__probeCalls)) === 1)
     await page.close()
   }
@@ -339,6 +340,65 @@ try {
     await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.primary').click()); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
     await page.waitForSelector('[data-testid=fail]')
     ok('when the host really tried two registries, the text says so', (await text(page)).includes('已依次尝试 2 个源'))
+    await page.close()
+  }
+  // 16 ── found when a user could not see the entry, and by reading the real screenshot
+  {
+    const { page } = await boot({ locale: 'zh' })
+    const label = await page.evaluate(() => window.__reg.slots.filter((s) => s.decl && s.decl.name === 'sidebar.panellist')[0].decl.label())
+    ok('sidebar entry is labelled "VibeDev 插件中心", not a bare "VibeDev" that hides next to the brand name', label === 'VibeDev 插件中心', label)
+    await page.evaluate(() => window.__setLocale('en'))
+    ok('the sidebar label follows the language', (await page.evaluate(() => window.__reg.slots.filter((s) => s.decl && s.decl.name === 'sidebar.panellist')[0].decl.label())) === 'VibeDev Plugin Center')
+    await page.close()
+  }
+  {
+    // YOUR machine: pnpm already defaults to the mirror -> the official page does not probe, and neither may we.
+    const { page } = await boot({ resolved: 'https://registry.npmmirror.com', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
+    ok('pnpm already on the mirror: no probe call, host default used throughout', (await page.evaluate(() => window.__probeCalls || 0)) === 0 && (await calls(page)).filter((x) => x[0] === 'inspect' || x[0] === 'installBundle').every((x) => x[2].registry === null))
+    await page.close()
+  }
+  {
+    const { page } = await boot({ fastest: 'https://registry.npmjs.org/', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
+    ok('if the official registry is the fastest, the mirror is NOT forced', (await calls(page)).filter((x) => x[0] === 'inspect').every((x) => x[2].registry === null))
+    await page.close()
+  }
+  {
+    // The registry probe is read through ctx.inject, as the real host demands; reading it directly throws there.
+    const { page, errs } = await boot({ noProbe: true })
+    ok('a host without the probe service still loads and renders', (await page.evaluate(() => document.querySelectorAll('.card').length)) === 5 && errs.length === 0, errs.join('; '))
+    await page.close()
+  }
+  // contrast of the label on primary buttons, light theme and dark theme, and a live theme switch
+  const btnColor = (page) => page.evaluate(() => { const b = document.querySelector('.btn.primary'); const s = getComputedStyle(b); return { color: s.color, bg: s.backgroundColor } })
+  const lum = (rgb) => { const m = /(\d+)[, ]+(\d+)[, ]+(\d+)/.exec(rgb); const [r, g, b] = [m[1], m[2], m[3]].map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }); return 0.2126 * r + 0.7152 * g + 0.0722 * b }
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05) }
+  {
+    const { page } = await boot({ brand: '#0f1115', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    const c = await btnColor(page)
+    ok('REAL light theme (brand #0f1115): primary button text is light and readable', lum(c.color) > 0.5 && ratio(c.color, c.bg) >= 4.5, `${c.color} on ${c.bg} = ${ratio(c.color, c.bg).toFixed(1)}:1`)
+    await shot(page, '23-light-real-brand')
+    await page.close()
+  }
+  {
+    const { page } = await boot({ dark: true, brand: '#e8eaf0', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    const c = await btnColor(page)
+    ok('dark theme with a LIGHT brand: primary button text turns dark (white-on-white would be unreadable)', lum(c.color) < 0.2 && ratio(c.color, c.bg) >= 4.5, `${c.color} on ${c.bg} = ${ratio(c.color, c.bg).toFixed(1)}:1`)
+    await shot(page, '24-dark-light-brand')
+    await page.close()
+  }
+  {
+    const { page } = await boot({ brand: '#4d6bfe', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    const c = await btnColor(page)
+    ok('a mid-tone brand (the worst case for contrast) still reaches 4.5:1', ratio(c.color, c.bg) >= 4.5, `${c.color} on ${c.bg} = ${ratio(c.color, c.bg).toFixed(2)}:1`)
+    await page.close()
+  }
+  {
+    const { page } = await boot({ brand: '#0f1115', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await page.evaluate(() => document.documentElement.style.setProperty('--dsw-alias-brand-primary', '#e8eaf0'))
+    await page.waitForFunction(() => { const s = getComputedStyle(document.querySelector('.btn.primary')); return /^rgb\(0, 0, 0\)/.test(s.color) }, { timeout: 5000 })
+    ok('switching the theme while the panel is open re-picks the label colour (no reload)', true)
     await page.close()
   }
 } catch (e) {

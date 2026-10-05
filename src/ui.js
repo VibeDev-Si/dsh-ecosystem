@@ -28,10 +28,10 @@ export function createCenter(React, catalog, host) {
 position:relative;display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg);color:var(--t1);font:14px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
 .vdc *{box-sizing:border-box}.vdc button{font:inherit;color:inherit;cursor:pointer}.vdc svg{flex:none}
 .vdc .top{display:flex;align-items:center;gap:18px;padding:12px 24px;border-bottom:1px solid var(--b1);background:var(--bg);flex:none;flex-wrap:wrap}
-.vdc .brand{display:flex;align-items:center;gap:10px}.vdc .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand),#8f6bff);display:grid;place-items:center;color:#fff}
+.vdc .brand{display:flex;align-items:center;gap:10px}.vdc .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#4d6bfe,#8f6bff);display:grid;place-items:center;color:#fff}
 .vdc h1{font-size:16px;margin:0;font-weight:650}.vdc .pill{font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--b2);color:var(--t2)}
 .vdc .tabs{display:flex;gap:4px}.vdc .tab{border:0;background:transparent;padding:6px 12px;border-radius:8px;color:var(--t2);font-weight:550}
-.vdc .tab:hover{background:var(--l1)}.vdc .tab.on{background:var(--l2);color:var(--t1)}.vdc .tab .n{margin-left:5px;font-size:11px;padding:0 6px;border-radius:99px;background:var(--brand);color:#fff}
+.vdc .tab:hover{background:var(--l1)}.vdc .tab.on{background:var(--l2);color:var(--t1)}.vdc .tab .n{margin-left:5px;font-size:11px;padding:0 6px;border-radius:99px;background:var(--brand);color:var(--on-brand,#fff)}
 .vdc .sp{flex:1}.vdc .ghost{border:1px solid var(--b2);background:transparent;border-radius:8px;padding:6px 12px}.vdc .ghost:hover{background:var(--l1)}
 .vdc .scroll{flex:1;overflow:auto;min-height:0}.vdc .wrap{max-width:1060px;margin:0 auto;padding:20px 24px 56px}
 .vdc .banner{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;border:1px solid color-mix(in srgb,var(--warn) 45%,var(--b1));background:color-mix(in srgb,var(--warn) 9%,var(--bg));margin-bottom:16px}
@@ -47,7 +47,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 .vdc .chips{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}.vdc .chip{display:flex;align-items:center;gap:7px;padding:5px 10px 5px 6px;border-radius:99px;background:var(--bg);border:1px solid var(--b1);font-size:13px}
 .vdc .chip .st{width:7px;height:7px;border-radius:50%;background:var(--idle)}.vdc .chip.done .st{background:var(--ok)}.vdc .arrow{color:var(--idle)}
 .vdc .btn{border:1px solid var(--b2);background:var(--bg);padding:7px 14px;border-radius:9px;font-weight:600;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.vdc .btn:hover{background:var(--l1)}.vdc .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}.vdc .btn.primary:hover{filter:brightness(1.08)}
+.vdc .btn:hover{background:var(--l1)}.vdc .btn.primary{background:var(--brand);border-color:var(--brand);color:var(--on-brand,#fff)}.vdc .btn.primary:hover{filter:brightness(1.08)}
 .vdc .btn.big{padding:10px 20px}.vdc .btn.sm{padding:5px 9px}.vdc .btn[disabled]{opacity:.5;cursor:default}
 .vdc .btn.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--b1));background:color-mix(in srgb,var(--ok) 8%,var(--bg));pointer-events:none}
 .vdc .btn.warn{background:color-mix(in srgb,var(--warn) 14%,var(--bg));border-color:color-mix(in srgb,var(--warn) 50%,var(--b1));color:var(--warn)}.vdc .btn.idle{color:var(--t2)}
@@ -131,6 +131,25 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const S = STR[lang]
     const [, bumpLocale] = useState(0)
     useEffect(() => (host.onLocale ? host.onLocale(() => bumpLocale((n) => n + 1)) : undefined), [])
+    // Label colour on primary buttons: black or white, whichever reads on the host's CURRENT brand colour.
+    const rootRef = useRef(null)
+    useEffect(() => {
+      const el = rootRef.current
+      if (!el) return undefined
+      const apply = () => {
+        try {
+          const probe = document.createElement('span')
+          probe.style.cssText = 'position:absolute;width:0;height:0;background:var(--brand)'
+          el.appendChild(probe); const bg = getComputedStyle(probe).backgroundColor; el.removeChild(probe)
+          el.style.setProperty('--on-brand', E.readableTextOn(bg))
+        } catch { /* keep the CSS fallback */ }
+      }
+      apply()
+      const mo = typeof MutationObserver === 'function' ? new MutationObserver(apply) : null
+      if (mo) { mo.observe(document.documentElement, { attributes: true }); mo.observe(document.body, { attributes: true }) }
+      const timer = setInterval(apply, 1500) // themes that swap a stylesheet change no attribute
+      return () => { mo && mo.disconnect(); clearInterval(timer) }
+    }, [])
     const [bundles, setBundles] = useState(null) // null = loading, false = unavailable
     const [view, setView] = useState('all')
     const [intro, setIntro] = useState(true)
@@ -180,7 +199,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const upd = () => setModal({ mode: 'run', run: { ...run, rows: run.rows.map((r) => ({ ...r })) } })
       const todo = run.rows.filter((r) => r.st !== 'skip')
       // Like the official Plugins page: ask the host which registry answers fastest (it matters on mainland-China networks).
-      const registry = (await host.fastestRegistry?.()) ?? null
+      const registry = (await host.chooseRegistry?.()) ?? null
       run.log.push(`start: ${todo.length}`, `registry: ${registry || 'default'}`)
       const results = []
       for (const row of run.rows) {
@@ -218,7 +237,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 
     const doMigrate = async (x) => {
       setModal({ mode: 'migrate', x, phase: 'run', step: 'inspect' })
-      const registry = (await host.fastestRegistry?.()) ?? null
+      const registry = (await host.chooseRegistry?.()) ?? null
       const r = await E.migrate(host.pm, x.entry, x.legacy, { registry, hooks: { onStep: (s) => setModal((m) => (m && m.mode === 'migrate' ? { ...m, step: s } : m)) } })
       await refresh()
       setModal({ mode: 'migrate', x, phase: 'done', result: r })
@@ -481,7 +500,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const modalBody = !modal ? null : modal.mode === 'confirm' ? Confirm() : modal.mode === 'run' ? Run() : modal.mode === 'result' ? Result() : modal.mode === 'migrate' ? Migrate() : UninstallResult()
 
     const counts = { inst: official.filter(isIn).length, upd: updates.length }
-    return h('div', { className: 'vdc', 'data-testid': 'center', onClick: () => menu && setMenu(null) },
+    return h('div', { className: 'vdc', ref: rootRef, 'data-testid': 'center', onClick: () => menu && setMenu(null) },
       h('style', null, CSS),
       h('header', { className: 'top' },
         h('div', { className: 'brand' }, h('div', { className: 'logo' }, I.logo()), h('h1', null, S.title), h('span', { className: 'pill' }, S.preview)),

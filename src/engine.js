@@ -86,6 +86,52 @@ export function cooldownEnds(publishedAtIso) {
 let seq = 0
 const newRequestId = () => `eco-${Date.now().toString(36)}-${(seq++).toString(36)}`
 
+/* ── registry choice: the same rule as the official Plugins page ─────────────────────────────
+ * The host's registries() answers { registry, fallbackRegistries, resolved }. The page only considers the
+ * China mirror when pnpm's own default resolves to the OFFICIAL npm registry (a user whose default is already
+ * a mirror is left alone), and then only switches to it when the host's probe says the mirror is the fastest. */
+const NPMJS = 'https://registry.npmjs.org/'
+const NPMMIRROR = 'https://registry.npmmirror.com/'
+const normReg = (u) => { try { const x = new URL(u); return `${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/?$/, '/')}` } catch { return undefined } }
+
+export function eligibleMirror(regs) {
+  if (!regs || regs.registry !== null || regs.resolved == null) return undefined
+  if (normReg(regs.resolved) !== NPMJS) return undefined
+  return (regs.fallbackRegistries ?? []).find((r) => r === NPMMIRROR)
+}
+
+/** The registry to ask first, or null for "whatever pnpm is configured with". Never throws, never waits long. */
+export async function chooseRegistry(pm, probe, opts = {}) {
+  const ms = opts.timeoutMs ?? 8000
+  const capped = (p) => { let t; return Promise.race([Promise.resolve(p), new Promise((r) => { t = setTimeout(() => r(undefined), ms) })]).finally(() => clearTimeout(t)) }
+  try {
+    const regs = await capped(pm?.registries?.())
+    if (!regs?.ok) return null
+    const mirror = eligibleMirror(regs.value)
+    if (!mirror || typeof probe?.fastest !== 'function') return null
+    const f = await capped(probe.fastest())
+    return f?.ok && f.value === mirror ? mirror : null
+  } catch { return null }
+}
+
+/* ── readable text on the host's brand colour ─────────────────────────────────────────────────
+ * The host's brand colour is near-black in the light theme and (very likely) light in the dark one, so a fixed
+ * white label on primary buttons would vanish. Pick whichever of black/white has the higher WCAG contrast. */
+export function readableTextOn(bg) {
+  const m = /rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/.exec(String(bg ?? ''))
+  if (!m) return '#fff'
+  const [r, g, b] = [m[1], m[2], m[3]].map((v) => { const c = Number(v) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) })
+  const L = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#fff' : '#000'
+}
+export function contrastRatio(fg, bg) {
+  const lum = (s) => { const m = /rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/.exec(s); if (!m) return undefined; const [r, g, b] = [m[1], m[2], m[3]].map((v) => { const c = Number(v) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }); return 0.2126 * r + 0.7152 * g + 0.0722 * b }
+  const a = lum(fg), b = lum(bg)
+  if (a === undefined || b === undefined) return undefined
+  const [hi, lo] = a >= b ? [a, b] : [b, a]
+  return (hi + 0.05) / (lo + 0.05)
+}
+
 /**
  * Install one entry: inspect -> install (not enabled) -> enable.
  * Never throws; always resolves to {status, ...}. status:
