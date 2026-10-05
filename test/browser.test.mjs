@@ -1,5 +1,5 @@
 import puppeteer from 'puppeteer-core'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startBench, state as benchState } from './bench-server.mjs'
@@ -15,6 +15,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const server = await startBench(4801)
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-first-run'], defaultViewport: { width: 1180, height: 860, deviceScaleFactor: 1.25 } })
 const MV = '@vibedev-si/dsh-media-viewer'
+// Versions come from the catalog (the install allow-list), so bumping one there never needs a test edit.
+const CATALOG = JSON.parse(readFileSync(join(here, '..', 'catalog', 'catalog.json'), 'utf8'))
+const spec = (id) => { const p = CATALOG.plugins.find((x) => x.id === id); return `${p.npm}@${p.version}` }
 
 const FAST = { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 40, maxMs: 300 } }
 async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false, noProbe = false, fastest, resolved, brand, settle = FAST } = {}) {
@@ -81,7 +84,7 @@ try {
     await waitText(page, '安装完成')
     const c = await calls(page)
     const installs = c.filter((x) => x[0] === 'installBundle')
-    ok('installed exactly the 3 missing, with exact versions', installs.map((x) => x[1]).join() === 'dsh-media@0.1.3,dsh-film@0.3.0,@vibedev-si/dsh-media-viewer@0.1.0', installs.map((x) => x[1]).join())
+    ok('installed exactly the 3 missing, with exact versions', installs.map((x) => x[1]).join() === ['dsh-media', 'dsh-film', MV].map(spec).join(), installs.map((x) => x[1]).join())
     ok('every install was requested NOT enabled', installs.every((x) => x[2].enabled === false))
     ok('each plugin enabled only after its own install', (() => { const seq = c.map((x) => x[0] + ':' + x[1]); return ['dsh-media', 'dsh-film', MV].every((n) => seq.indexOf('setBundleEnabled:' + n) > seq.findIndex((s) => s.startsWith('installBundle:' + n))) })())
     const t2 = await text(page)
@@ -100,7 +103,7 @@ try {
     ok('confirm sheet lists the prerequisite too', (await text(page)).includes('Better Sidebar'))
     await shot(page, '05-confirm-with-dep')
     await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
-    ok('prerequisite installed before the plugin', (await calls(page)).filter((x) => x[0] === 'installBundle').map((x) => x[1]).join() === `dsh-better-sidebar@0.24.1,${MV}@0.1.0`)
+    ok('prerequisite installed before the plugin', (await calls(page)).filter((x) => x[0] === 'installBundle').map((x) => x[1]).join() === `dsh-better-sidebar@0.24.1,${spec(MV)}`)
     await page.close()
   }
 
@@ -140,7 +143,7 @@ try {
     await click(page, '[data-testid=approve]'); await waitText(page, '安装完成')
     const call = (await calls(page)).filter((c) => c[0] === 'installBundle' && String(c[1]).startsWith('dsh-film')).pop()
     ok('approval is sent as approvedBuilds with the same package names', JSON.stringify(call[2].approvedBuilds) === '["esbuild","protobufjs"]', JSON.stringify(call[2].approvedBuilds))
-    ok('after approval, the remaining plugins continue', (await calls(page)).some((c) => c[0] === 'installBundle' && c[1] === `${MV}@0.1.0`))
+    ok('after approval, the remaining plugins continue', (await calls(page)).some((c) => c[0] === 'installBundle' && c[1] === spec(MV)))
     await page.close()
   }
 
