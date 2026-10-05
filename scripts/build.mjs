@@ -114,5 +114,10 @@ ${body}
 
 // Parse check: a syntax error must fail the build, not a user's page.
 try { new Function(out) } catch (e) { console.error('client.js does not parse:', e.message); process.exit(1) }
-writeFileSync(join(root, 'client.js'), out)
-console.log(`client.js built: ${(out.length / 1024).toFixed(1)} KB (engine ${engine.exportsFound.length} exports, catalog ${(catalog.length / 1024).toFixed(1)} KB)`)
+// Do not rewrite an identical file: a changed mtime makes the host hot-reload the plugin's client in every open window,
+// so a no-op rebuild used to flash the UI for anyone running a linked (file:) install.
+const target = join(root, 'client.js')
+let same = false
+try { same = readFileSync(target, 'utf8') === out } catch { /* first build */ }
+if (!same) writeFileSync(target, out)
+console.log(`client.js ${same ? 'unchanged' : 'built'}: ${(out.length / 1024).toFixed(1)} KB (engine ${engine.exportsFound.length} exports, catalog ${(catalog.length / 1024).toFixed(1)} KB)`)
