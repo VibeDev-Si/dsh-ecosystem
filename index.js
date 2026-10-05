@@ -6,7 +6,8 @@
  * developer-only self-check channel that is OFF unless a marker file exists:
  *
  *   GET  /vdc/ping        -> {ok:true}
- *   GET  /vdc/config      -> {selfcheck: <does <profile>/.vdc/enable-selfcheck exist>}
+ *   GET  /vdc/config      -> {selfcheck, mount}: does <profile>/.vdc/enable-selfcheck exist, and does enable-selfcheck-mount
+ *                            (the second, separate opt-in that lets the check switch panels, which the user can SEE)
  *   POST /vdc/selfcheck   -> writes the client's report to <profile>/.vdc/selfcheck.json  (only when enabled)
  *
  * All routes are loopback-only (same Host/Origin fence as the other routes). Nothing leaves the machine.
@@ -35,6 +36,7 @@ export function trusted(req, trustedHosts) {
 const MAX_BODY = 64 * 1024
 const profileDir = () => process.env.DSH_PROFILE_DIR ?? process.cwd()
 const markerPath = () => join(profileDir(), '.vdc', 'enable-selfcheck')
+const mountMarkerPath = () => join(profileDir(), '.vdc', 'enable-selfcheck-mount')
 const exists = async (p) => { try { await access(p); return true } catch { return false } }
 
 export function apply(ctx) {
@@ -47,7 +49,11 @@ export function apply(ctx) {
         if (!trusted(req, ctx.webRuntime.trustedHosts)) return json(403, { ok: false })
         const url = new URL(req.url ?? '/', 'http://x')
         if (url.pathname === '/vdc/ping' && req.method === 'GET') return json(200, { ok: true, name })
-        if (url.pathname === '/vdc/config' && req.method === 'GET') return json(200, { ok: true, selfcheck: await exists(markerPath()) })
+        if (url.pathname === '/vdc/config' && req.method === 'GET') {
+          const on = await exists(markerPath())
+          // The visible part only ever applies when the whole self-check is on.
+          return json(200, { ok: true, selfcheck: on, mount: on && (await exists(mountMarkerPath())) })
+        }
         if (url.pathname === '/vdc/selfcheck' && req.method === 'POST') {
           if (!(await exists(markerPath()))) return json(403, { ok: false, error: 'self-check is not enabled' })
           const chunks = []; let size = 0

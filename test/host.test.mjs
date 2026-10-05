@@ -1,7 +1,7 @@
 // Real-HTTP test of the host half against a fake cordis ctx.
 import assert from 'node:assert/strict'
 import { createServer, request as httpRequest } from 'node:http'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -26,6 +26,23 @@ await t('PRIVACY: a report is refused (403) and nothing is written while it is o
 })
 mkdirSync(join(profile, '.vdc'), { recursive: true }); writeFileSync(join(profile, '.vdc', 'enable-selfcheck'), '')
 await t('marker file turns it on', async () => { assert.equal((await (await fetch(base + '/vdc/config')).json()).selfcheck, true) })
+await t('the VISIBLE part (switching panels) stays off even when the self-check is on', async () => {
+  const j = await (await fetch(base + '/vdc/config')).json()
+  assert.equal(j.selfcheck, true); assert.equal(j.mount, false)
+})
+await t('the visible part needs its own second marker', async () => {
+  writeFileSync(join(profile, '.vdc', 'enable-selfcheck-mount'), '')
+  assert.equal((await (await fetch(base + '/vdc/config')).json()).mount, true)
+  rmSync(join(profile, '.vdc', 'enable-selfcheck-mount'))
+  assert.equal((await (await fetch(base + '/vdc/config')).json()).mount, false)
+})
+await t('the second marker alone does nothing: no self-check, no mount', async () => {
+  writeFileSync(join(profile, '.vdc', 'enable-selfcheck-mount'), '')
+  rmSync(join(profile, '.vdc', 'enable-selfcheck'))
+  const j = await (await fetch(base + '/vdc/config')).json()
+  assert.equal(j.selfcheck, false); assert.equal(j.mount, false)
+  writeFileSync(join(profile, '.vdc', 'enable-selfcheck'), ''); rmSync(join(profile, '.vdc', 'enable-selfcheck-mount'))
+})
 await t('a report is stored under the profile, with a timestamp', async () => {
   const r = await post('/vdc/selfcheck', { plugin: 'x', checks: { a: 1 } })
   assert.equal(r.status, 200)

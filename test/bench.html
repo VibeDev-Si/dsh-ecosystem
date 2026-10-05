@@ -48,6 +48,11 @@
       }, {
         pluginRegistryProbe: { enumerable: true, get: function () { throw new Error('cannot get property "remote.pluginRegistryProbe" without inject') } },
       }),
+      // The shell's layout service: records every panel switch so a test can prove the center did NOT switch panels.
+      layout: {
+        selectPanel: function (id) { (window.__panelSwitches = window.__panelSwitches || []).push(id); },
+        panelInfo: { getSnapshot: function () { return { activePanelId: 'conversation' } } },
+      },
       // ctx.inject(names, cb): runs cb with a scoped ctx where the optional service is readable (when the host has it).
       inject: function (names, cb) {
         var probe = opts.noProbe ? undefined : { fastest: function () { window.__probeCalls = (window.__probeCalls || 0) + 1; return Promise.resolve({ ok: true, value: opts.fastest === undefined ? 'https://registry.npmmirror.com/' : opts.fastest }) } };

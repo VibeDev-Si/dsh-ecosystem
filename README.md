@@ -59,7 +59,7 @@ npm run validate:online  # 核对目录里每个包@版本真的在 npm 上
 
 ### 开发者自检（默认关闭）
 
-在 `<profile>/.vdc/` 下手动创建空文件 `enable-selfcheck`，下次加载时插件会做**只读**检查（`listBundles`、`inspect`，并短暂打开自己的面板确认能在真实界面里挂载），把报告写到本机的 `<profile>/.vdc/selfcheck.json`。不创建这个文件就什么都不会发生。
+在 `<profile>/.vdc/` 下手动创建空文件 `enable-selfcheck`，下次加载时插件会做**只读**检查（`listBundles`、`inspect`、读取主题和语言等），把报告写到本机的 `<profile>/.vdc/selfcheck.json`。不创建这个文件就什么都不会发生。这一步完全不可见。若还想验证面板能在真实界面里挂载（会让屏幕**短暂闪一下**，因为要临时切到插件中心面板再切回），需要**另外**创建空文件 `enable-selfcheck-mount`。
 
 ## 参与
 

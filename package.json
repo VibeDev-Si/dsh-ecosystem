@@ -1,6 +1,6 @@
 {
   "name": "@vibedev-si/dsh-ecosystem",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "VibeDev 插件中心：集中了解、一键安装和管理 VibeDev 官方插件，支持套装、旧包名迁移，并可一键安装社区插件市场 · VibeDev Plugin Center: learn about, one-click install and manage the official VibeDev plugins, with suites, legacy-package migration, and a one-click install of the community plugin market",
   "type": "module",
   "main": "index.js",

@@ -2,7 +2,7 @@ import puppeteer from 'puppeteer-core'
 import { mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { startBench } from './bench-server.mjs'
+import { startBench, state as benchState } from './bench-server.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const SHOTS = process.env.SHOTS ?? join(here, '..', 'shots')
@@ -399,6 +399,41 @@ try {
     await page.evaluate(() => document.documentElement.style.setProperty('--dsw-alias-brand-primary', '#e8eaf0'))
     await page.waitForFunction(() => { const s = getComputedStyle(document.querySelector('.btn.primary')); return /^rgb\(0, 0, 0\)/.test(s.color) }, { timeout: 5000 })
     ok('switching the theme while the panel is open re-picks the label colour (no reload)', true)
+    await page.close()
+  }
+  // 17 ── the flash: the self-check must never switch the user's visible panel unless explicitly asked to
+  const runSelfCheck = async (config) => {
+    benchState.config = config; benchState.reports.length = 0
+    const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await page.waitForFunction(() => true)
+    const t0 = Date.now()
+    while (Date.now() - t0 < 9000 && !benchState.reports.length && config.selfcheck) await sleep(250)
+    await sleep(config.selfcheck ? 400 : 3500) // when it is off, wait past the 2.5 s start delay to prove nothing happens
+    const out = { switches: await page.evaluate(() => window.__panelSwitches || []), report: benchState.reports[0] }
+    await page.close()
+    return out
+  }
+  {
+    const r = await runSelfCheck({ selfcheck: false, mount: false })
+    ok('self-check OFF: no panel switch and no report at all', r.switches.length === 0 && !r.report, JSON.stringify(r.switches))
+  }
+  {
+    const r = await runSelfCheck({ selfcheck: true, mount: false })
+    ok('self-check ON, mount off: it reports, but NEVER switches the visible panel (the cause of the flash)', !!r.report && r.switches.length === 0, JSON.stringify(r.switches))
+    ok('...and the report says the mount check was skipped, honestly', typeof r.report?.checks?.['panel.mounted'] === 'string' && /skipped/.test(r.report.checks['panel.mounted']), String(r.report?.checks?.['panel.mounted']))
+    ok('...while still reading the non-visible facts (pluginManager, listBundles)', r.report?.checks?.['pluginManager.present'] === true && r.report?.checks?.listBundles?.ok === true)
+  }
+  {
+    const r = await runSelfCheck({ selfcheck: true, mount: true })
+    ok('self-check ON + mount ON: it switches to the center and then BACK to the previous panel', r.switches.length === 2 && r.switches[0] === 'vibedev-center' && r.switches[1] === 'conversation', JSON.stringify(r.switches))
+    ok('...and reports the panel mounted', r.report?.checks?.['panel.mounted'] === true)
+  }
+  {
+    // A page that merely renders (no self-check) must not even ask for config more than once per load.
+    benchState.config = { selfcheck: false, mount: false }; benchState.configHits = 0
+    const { page } = await boot()
+    await sleep(3500)
+    ok('a normal load asks the host for the self-check config exactly once', benchState.configHits === 1, `hits=${benchState.configHits}`)
     await page.close()
   }
 } catch (e) {

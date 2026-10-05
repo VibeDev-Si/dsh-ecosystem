@@ -73,6 +73,12 @@ export async function runSelfCheck(ctx, panelId, catalog, errs, version, probeHo
     await safe('inspect.installedName', () => { const probe = catalog.plugins.find((p) => p.id === 'dsh-better-sidebar'); return timed(probe.npm + '@' + probe.version, null) })
   }
 
+  // Switching the visible panel flashes the user's screen, and the host hot-reloads linked installs on every file change,
+  // so doing it by default made it fire at random (it did, to a real user). It is therefore a SECOND, separate opt-in:
+  // <profile>/.vdc/enable-selfcheck-mount. Without it the check stays entirely invisible.
+  if (cfg.mount !== true) {
+    add('panel.mounted', 'skipped: the visible mount check is off (create .vdc/enable-selfcheck-mount to run it)')
+  } else {
   // Prove the panel mounts inside the real shell.
   let previous
   try { previous = ctx.layout.panelInfo && ctx.layout.panelInfo.getSnapshot().activePanelId } catch { /* optional */ }
@@ -110,6 +116,7 @@ export async function runSelfCheck(ctx, panelId, catalog, errs, version, probeHo
     }
   } catch (e) { add('panel.error', String(e && e.message || e)) }
   try { ctx.layout.selectPanel(previous === undefined ? null : previous) } catch { /* best effort */ }
+  }
 
   add('errors', errs.slice())
   try {
