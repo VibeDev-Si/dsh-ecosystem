@@ -16,7 +16,7 @@
     {
       "id": "@vibedev-si/dsh-vibedev",
       "npm": "@vibedev-si/dsh-vibedev",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "publishedAt": "2026-10-06T00:00:00.000Z",
       "origin": "official",
       "role": "official",
@@ -48,7 +48,7 @@
       "requires": [],
       "partners": ["dsh-film"],
       "legacyNames": ["dsh-media"],
-      "sizeKB": 1526,
+      "sizeKB": 1553,
       "capabilities": [
         { "key": "network", "text": { "zh": "发给 VibeDev 模型的对话、提示词和参考素材会发送到 VibeDev 网关，再转交模型服务商", "en": "Conversations with VibeDev models, prompts and reference media are sent to the VibeDev gateway, which forwards them to the model provider" } },
         { "key": "credentials", "text": { "zh": "在系统浏览器里登录 VibeDev，插件拿不到密码；登录凭据存在 DeepSeek Harness 的凭据存储里。在 VibeDev 应用里直接用已登录的账号", "en": "You sign in to VibeDev in your system browser and the plugin never sees the password; the sign-in is kept in DeepSeek Harness's credential store. Inside the VibeDev app the app's account is used" } },
