@@ -16,7 +16,8 @@ const server = await startBench(4801)
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-first-run'], defaultViewport: { width: 1180, height: 860, deviceScaleFactor: 1.25 } })
 const MV = '@vibedev-si/dsh-media-viewer'
 
-async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false, noProbe = false, fastest, resolved, brand } = {}) {
+const FAST = { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 40, maxMs: 300 } }
+async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false, noProbe = false, fastest, resolved, brand, settle = FAST } = {}) {
   const page = await browser.newPage()
   const errs = []
   page.on('pageerror', (e) => errs.push(String(e)))
@@ -26,11 +27,11 @@ async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', ma
   await page.goto('http://127.0.0.1:4801/')
   if (dark) await page.evaluate(() => { const s = document.documentElement.style; const v = { '--dsw-alias-bg-base': '#16171b', '--dsw-alias-bg-layer-1': '#1e1f25', '--dsw-alias-bg-layer-2': '#272830', '--dsw-alias-bg-overlay': '#2a2b33', '--dsw-alias-border-l1': 'rgba(255,255,255,.09)', '--dsw-alias-border-l2': 'rgba(255,255,255,.18)', '--dsw-alias-brand-primary': '#6f87ff', '--dsw-alias-label-primary': '#ececf2', '--dsw-alias-label-secondary': '#9b9fae' }; for (const k in v) s.setProperty(k, v[k]); document.body.style.background = '#16171b' })
   if (brand) await page.evaluate((b) => document.documentElement.style.setProperty('--dsw-alias-brand-primary', b), brand)
-  await page.evaluate(async (initial, scenarios, delay, locale, market, noProbe, fastest, resolved) => {
+  await page.evaluate(async (initial, scenarios, delay, locale, market, noProbe, fastest, resolved, settle) => {
     const { createFakePm } = await import('/fake-pm.js')
     window.__pm = createFakePm(initial, scenarios, { delay, resolved })
-    window.setup({ locale, market, noProbe, fastest }); window.mountPanel()
-  }, initial, scenarios, delay, locale, market, noProbe, fastest, resolved)
+    window.setup({ locale, market, noProbe, fastest, settle }); window.mountPanel()
+  }, initial, scenarios, delay, locale, market, noProbe, fastest, resolved, settle)
   await page.waitForSelector('[data-testid=center]')
   await sleep(150)
   return { page, errs }
@@ -434,6 +435,69 @@ try {
     const { page } = await boot()
     await sleep(3500)
     ok('a normal load asks the host for the self-check config exactly once', benchState.configHits === 1, `hits=${benchState.configHits}`)
+    await page.close()
+  }
+  // 18 ── found by a real crash: the "reload the page" button pressed seconds after a 4-plugin install
+  {
+    const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    let navs = 0; page.on('framenavigated', (f) => { if (f === page.mainFrame()) navs++ })
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
+    const t = await text(page)
+    const buttons = await page.evaluate(() => [...document.querySelectorAll('.modal button')].map((b) => b.textContent.trim()))
+    ok('the done screen has NO reload / refresh button (the official page has none either)', !buttons.some((b) => /刷新|Reload|重新加载/.test(b)), buttons.join(' | '))
+    ok('it says plainly that no reload is needed, and what to do if nothing appears', t.includes('不需要刷新页面') && t.includes('完全退出并重新打开 VibeDev'))
+    ok('its only action is a plain "知道了"', buttons.includes('知道了'))
+    await click(page, '[data-testid=done]'); await sleep(200)
+    ok('the page itself was never navigated or reloaded by the center', navs === 0, `navigations=${navs}`)
+    await shot(page, '25-done-no-reload'); await page.close()
+  }
+  {
+    // Final settle: the result must not appear while the host is still sending changes.
+    const { page } = await boot({ settle: { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 500, maxMs: 4000 } }, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }, { name: 'dsh-media', version: '0.1.3' }, { name: 'dsh-film', version: '0.3.0' }] })
+    await page.evaluate(() => { document.querySelector('.card[data-id="@vibedev-si/dsh-media-viewer"] .btn.primary').click() })
+    await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    await page.waitForFunction(() => /等 VibeDev 加载完/.test(document.body.innerText), { timeout: 8000 })
+    ok('after the last plugin the center says it is waiting for VibeDev to finish loading', true)
+    let tLast = 0
+    for (let i = 0; i < 8; i++) { await page.evaluate(() => window.__fireChanged()); tLast = Date.now(); await sleep(150) }   // the host keeps updating for about 1 s
+    const stillWaiting = await page.evaluate(() => /等 VibeDev 加载完/.test(document.body.innerText) && !document.body.innerText.includes('安装完成'))
+    ok('while the host keeps sending changes the center does NOT yet show "done"', stillWaiting)
+    await waitText(page, '安装完成', 6000)
+    const quietFor = Date.now() - tLast
+    ok('...and shows it only after the host has been quiet for the full quiet period (500 ms) since its LAST change', quietFor >= 480, `quiet for ${quietFor} ms before done`)
+    await page.close()
+  }
+  {
+    const { page } = await boot({ settle: { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 300, maxMs: 900 } }, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }, { name: 'dsh-media', version: '0.1.3' }, { name: 'dsh-film', version: '0.3.0' }] })
+    await page.evaluate(() => { document.querySelector('.card[data-id="@vibedev-si/dsh-media-viewer"] .btn.primary').click() })
+    await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    await page.waitForFunction(() => /等 VibeDev 加载完/.test(document.body.innerText), { timeout: 8000 })
+    const t0 = Date.now(); const iv = setInterval(() => page.evaluate(() => window.__fireChanged()).catch(() => {}), 60)
+    await waitText(page, '安装完成', 6000); clearInterval(iv)
+    ok('a host that never goes quiet cannot hold the result back beyond maxMs', Date.now() - t0 < 2500, `${Date.now() - t0} ms`)
+    await page.close()
+  }
+  {
+    // Between plugins: the next plugin is not touched while the host is still applying the previous one.
+    const { page } = await boot({ settle: { between: { quietMs: 400, maxMs: 3000 }, final: { quietMs: 20, maxMs: 200 } }, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await page.evaluate(() => { const pm = window.__pm; window.__t = []; for (const k of ['inspect', 'installBundle', 'setBundleEnabled']) { const o = pm[k].bind(pm); pm[k] = (...a) => { window.__t.push([k, String(a[0]), Date.now()]); return o(...a) } } })
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    await page.waitForFunction(() => window.__t.some((x) => x[0] === 'setBundleEnabled' && x[1] === 'dsh-media'), { timeout: 8000 })
+    const tEnabled = await page.evaluate(() => window.__t.find((x) => x[0] === 'setBundleEnabled' && x[1] === 'dsh-media')[2])
+    let tBusyEnd = 0
+    for (let i = 0; i < 6; i++) { await page.evaluate(() => window.__fireChanged()); tBusyEnd = Date.now(); await sleep(100) }   // host busy for about 0.5 s
+    await waitText(page, '安装完成', 10000)
+    const next = await page.evaluate(() => window.__t.find((x) => x[0] === 'inspect' && x[1].startsWith('dsh-film'))[2])
+    ok('the next plugin starts only after the host has been quiet for the full pause (400 ms) since its LAST change', next - tBusyEnd >= 380, `${next - tBusyEnd} ms after the last host change`)
+    await page.close()
+  }
+  {
+    // A failed run has nothing left to apply: it must not make the user wait for the host.
+    const { page } = await boot({ settle: { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 5000, maxMs: 20000 } }, scenarios: { 'dsh-film': { network: true } }, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    const t0 = Date.now()
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    await page.waitForSelector('[data-testid=fail]', { timeout: 8000 })
+    ok('a failed install shows its error at once, without the final wait', Date.now() - t0 < 3000, `${Date.now() - t0} ms`)
     await page.close()
   }
 } catch (e) {

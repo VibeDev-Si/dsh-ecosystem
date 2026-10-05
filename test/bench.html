@@ -60,7 +60,9 @@
       },
       reflect: { get: function (k) { return k === 'market' && opts.market ? { render: function () { return window.React.createElement('div', { 'data-testid': 'market-embed' }, 'EMBEDDED MARKET UI') } } : undefined } },
     };
+    ctx.__vdcSettle = opts.settle;   // test hook: fast settle timings (the real host never sets this)
     window.__ctx = ctx; window.__listeners = listeners;
+    window.__fireChanged = function () { listeners.slice().forEach(function (l) { if (l[0] === 'plugin-manager/changed') l[1]() }) };
     window.__setLocale = function (id) { window.__localeActive = id; localeListeners.slice().forEach(function (f) { f() }) };
     mod.apply(ctx);
     return true;

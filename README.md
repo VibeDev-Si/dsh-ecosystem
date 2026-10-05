@@ -26,7 +26,11 @@
 dsh plugin --profile <你的 profile 名> add @vibedev-si/dsh-ecosystem
 ```
 
-VibeDev 桌面版的命令是 `vibedev-app plugin --profile desktop add @vibedev-si/dsh-ecosystem`，先完全退出应用再运行。装好后刷新页面，侧边栏会多出入口。
+VibeDev 桌面版的命令是 `vibedev-app plugin --profile desktop add @vibedev-si/dsh-ecosystem`，先完全退出应用再运行。
+
+> **包名必须带 `@vibedev-si/` 前缀。** 只写 `dsh-ecosystem` 会提示「未找到相关插件」，那是另一个不存在的名字。
+
+装好后插件由 VibeDev 自己加载，通常几秒内侧边栏就会出现「VibeDev 插件中心」，**不需要刷新页面**；如果过一会儿仍没有，请完全退出并重新打开 VibeDev。
 
 ## 安全
 
@@ -40,6 +44,8 @@ VibeDev 桌面版的命令是 `vibedev-app plugin --profile desktop add @vibedev
 - 插件自身不联网、不上报任何数据，目录随包发布；安装时由官方插件管理器去访问 npm（并按官方插件页的做法，先问宿主哪个源最快）。
 
 ## 已知情况
+
+- **一次装多个插件时，插件中心会在每个插件之间、以及全部装完之后，等 VibeDev 安静下来再继续。** 0.1.1 没有这样做，还多了一个「立即刷新页面」按钮；有用户在装完套装、紧接着点刷新后，桌面版启动时报「1 entry did not activate」。触发的确切原因没有被证实，但 0.1.2 去掉了刷新按钮并加了等待。若遇到类似的启动失败，请到 Issues 附上崩溃日志。
 
 - **更新已安装的插件需要重启 VibeDev** 才会加载新代码（官方插件管理器的行为），界面会这样提示。
 - pnpm 的"新版本冷却期"（默认一天）会拦住**所有**安装和卸载，界面会指出是哪个包、什么时候恢复。
@@ -71,7 +77,7 @@ npm run validate:online  # 核对目录里每个包@版本真的在 npm 上
 
 Because it can install other plugins, it is deliberately strict: it installs only catalog entries at their exact version; it blocks the install if the registry's answer does not match the catalog; it stops and asks before any dependency build script runs; and it sends no data anywhere.
 
-Install by package name from your DSH plugin manager, or `dsh plugin --profile <name> add @vibedev-si/dsh-ecosystem`, then reload the page. Updating an already-installed plugin needs a restart of VibeDev to load the new code.
+Install by package name from your DSH plugin manager, or `dsh plugin --profile <name> add @vibedev-si/dsh-ecosystem`. The package name must include the `@vibedev-si/` scope (plain `dsh-ecosystem` does not exist). VibeDev loads the plugin itself, usually within seconds, so there is no need to reload the page; if the sidebar still has not changed after a while, quit VibeDev completely and reopen it. Updating an already-installed plugin needs a restart of VibeDev to load the new code.
 
 ## License
 

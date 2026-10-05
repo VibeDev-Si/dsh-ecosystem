@@ -114,6 +114,25 @@ export async function chooseRegistry(pm, probe, opts = {}) {
   } catch { return null }
 }
 
+/* ── let the host finish applying a change before the next one, and before telling the user it is done ──────────
+ * Every enable makes the host rebuild its module graph and push it to the open page. A real user installed the whole
+ * suite (four enables in about 25 s) and pressed our "reload" button seconds after the last one: the booting page then
+ * failed to load one of the plugins and the desktop shell showed its crash dialog. The exact trigger is not proven, but
+ * reloading in the middle of the host's own update is the one thing we did that the official Plugins page never does.
+ * So: wait until no change event has arrived for `quietMs` (never longer than `maxMs`), and never reload for the user. */
+export function waitQuiet(subscribe, opts = {}) {
+  const quietMs = opts.quietMs ?? 2000
+  const maxMs = opts.maxMs ?? 10000
+  return new Promise((resolve) => {
+    let quiet, cap, off
+    const done = () => { clearTimeout(quiet); clearTimeout(cap); try { if (typeof off === 'function') off() } catch { /* ignore */ } resolve() }
+    const arm = () => { clearTimeout(quiet); quiet = setTimeout(done, quietMs) }
+    try { off = typeof subscribe === 'function' ? subscribe(arm) : undefined } catch { off = undefined }
+    arm()
+    cap = setTimeout(done, maxMs)
+  })
+}
+
 /* ── readable text on the host's brand colour ─────────────────────────────────────────────────
  * The host's brand colour is near-black in the light theme and (very likely) light in the dark one, so a fixed
  * white label on primary buttons would vanish. Pick whichever of black/white has the higher WCAG contrast. */

@@ -1,7 +1,7 @@
 /**
  * The Plugin Center screen. One React component tree, driven entirely by:
  *   - the catalog (static data),
- *   - `host` : { pm, locale, theme-free, openUrl?, copy?, reload?, hasMarketUi?, renderMarket? }
+ *   - `host` : { pm, locale, openUrl?, copy?, renderMarket?, onChanged?, onLocale?, chooseRegistry?, settle? }
  * so the SAME code runs inside VibeDev and inside the Chrome test bench with a fake `pm`.
  *
  * Colours come only from the host's --dsw-alias-* variables (fallbacks are for the test bench).
@@ -202,9 +202,16 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const registry = (await host.chooseRegistry?.()) ?? null
       run.log.push(`start: ${todo.length}`, `registry: ${registry || 'default'}`)
       const results = []
+      // Let the host finish applying one plugin before the next change (see engine.waitQuiet for why).
+      const T = (host.settle && host.settle()) || {}
+      const between = T.between || { quietMs: 1200, maxMs: 6000 }
+      const closing = T.final || { quietMs: 2500, maxMs: 12000 }
+      let first = true
       for (const row of run.rows) {
         if (row.st === 'skip') continue
         if (aborter.current.signal.aborted) { row.st = 'wait'; results.push({ id: row.entry.id, status: 'cancelled' }); break }
+        if (!first) { run.waiting = true; upd(); await E.waitQuiet(host.onChanged, between); run.waiting = false }
+        first = false
         run.cur = row; row.st = 'run'; row.sub = S.stInspect; upd()
         const state = update ? { installed: true, enabled: row.enabled } : row
         const r = await E.installOne(host.pm, row.entry, state, {
@@ -224,9 +231,11 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         }
         row.st = 'ok'; row.outcome = r.status; run.cur = null; run.log.push(`ok ${row.entry.id} (${r.status})`); upd()
       }
-      await refresh()
       const failed = results.find((x) => x.status === 'failed' || x.status === 'cancelled')
       const restart = results.some((x) => x.status === 'restart')
+      // Only wait when something was actually changed: a failed or cancelled run has nothing left to apply.
+      if (!failed && results.some((x) => x.status === 'done' || x.status === 'enabledOnly' || x.status === 'restart')) { run.settling = true; run.cur = null; upd(); await E.waitQuiet(host.onChanged, closing); run.settling = false }
+      await refresh()
       setModal({ mode: 'result', run: { ...run, rows: run.rows.map((r) => ({ ...r })) }, results, failed, restart, update, title })
     }
     const cancelRun = async () => {
@@ -415,7 +424,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const done = todo.filter((r) => r.st === 'ok').length
       const pct = todo.length ? Math.round(((done + (run.cur ? 0.5 : 0)) / todo.length) * 100) : 100
       return [
-        h('div', { className: 'mh', key: 'h' }, h('h2', null, `${S.installing}: ${run.title.replace(/^[^ ]+ /, '')}`), h('p', null, S.progress(done, todo.length))),
+        h('div', { className: 'mh', key: 'h' }, h('h2', null, `${S.installing}: ${run.title.replace(/^[^ ]+ /, '')}`), h('p', { 'data-testid': 'progress' }, run.settling ? S.settling : run.waiting ? S.waitingHost : S.progress(done, todo.length))),
         h('div', { className: 'mb', key: 'b' }, h('div', { className: 'bar' }, h('i', { style: { width: Math.min(pct, 100) + '%' } })), run.rows.map(Row),
           h('details', { open: true }, h('summary', null, S.logH), h('div', { className: 'log' }, run.log.join('\n')))),
         h('div', { className: 'mf', key: 'f' }, h('div', { className: 'grow' }, run.cur && run.cur.sub === S.stEnable ? S.cancelHintLate : S.cancelHintOk), h('button', { className: 'btn', 'data-testid': 'cancel', disabled: !!(run.cur && run.cur.sub === S.stEnable), onClick: cancelRun }, S.cancelInstall)),
@@ -442,13 +451,15 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       let head, extra, acts, title
       if (!failed && !restart) {
         title = S.doneTitle
-        head = h('div', { className: 'res ok' }, I.ok(), h('div', null, h('b', null, S.doneHead(done.length)), h('span', null, S.doneRefresh)))
+        head = h('div', { className: 'res ok' }, I.ok(), h('div', null, h('b', null, S.doneHead(done.length)), h('span', null, S.doneLoaded)))
         const ids = done.map((r) => r.entry.id)
         extra = h('div', { className: 'next' }, h('b', null, S.nextH), h('ul', null,
           ids.includes('dsh-film') && h('li', { key: 1 }, S.nextFilm), ids.includes('dsh-media') && h('li', { key: 2 }, S.nextMedia),
           ids.includes('@vibedev-si/dsh-media-viewer') && h('li', { key: 3 }, S.nextViewer), ids.includes(MARKET) && h('li', { key: 4 }, S.nextMarket),
           !marketIn && !ids.includes(MARKET) && h('li', { key: 5 }, S.nextMarketHint)))
-        acts = [h('button', { className: 'btn', key: 'l', onClick: () => setModal(null) }, S.refreshLater), h('button', { className: 'btn primary big', key: 'n', onClick: () => host.reload?.() }, S.refreshNow)]
+        // No "reload the page" button, on purpose: the official Plugins page never reloads either (the host loads an
+        // enabled plugin itself), and a reload pressed while the host was still applying the last change crashed a real user's boot.
+        acts = h('button', { className: 'btn primary big', 'data-testid': 'done', onClick: () => setModal(null) }, S.gotIt)
       } else if (!failed && restart) {
         title = S.restartTitle
         head = h('div', { className: 'res warn' }, I.warn(), h('div', null, h('b', null, S.restartHead), h('span', null, S.restartBody(done.length))))

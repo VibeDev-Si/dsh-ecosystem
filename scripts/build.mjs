@@ -77,7 +77,8 @@ function apply(ctx) {
     onChanged: function (fn) { try { return ctx.remote.$on("plugin-manager/changed", fn); } catch (e) { return function () {}; } },
     openUrl: function (u) { window.open(u, "_blank", "noopener"); },
     copy: function (t) { try { navigator.clipboard && navigator.clipboard.writeText(t); } catch (e) {} },
-    reload: function () { window.location.reload(); },
+    // Test hook only: the real host never sets ctx.__vdcSettle, so production always uses the built-in timings.
+    settle: function () { return ctx.__vdcSettle || null; },
     renderMarket: function () { try { var m = ctx.reflect && ctx.reflect.get && ctx.reflect.get("market"); return m && m.render ? m.render() : null; } catch (e) { return null; } }
   });
   var Panel = function () { return React.createElement(Center); };

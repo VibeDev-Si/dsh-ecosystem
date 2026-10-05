@@ -166,6 +166,32 @@ await t('contrast: the choice always reaches WCAG AA (4.5:1) on black, white and
 })
 await t('contrast: an unparseable colour falls back to white instead of throwing', () => { assert.equal(E.readableTextOn('var(--x)'), '#fff'); assert.equal(E.readableTextOn(undefined), '#fff') })
 
+// ── waitQuiet: let the host finish before the next change / before saying "done" ───────────────
+await t('waitQuiet: with no events it resolves after quietMs', async () => {
+  const t0 = Date.now(); await E.waitQuiet(() => () => {}, { quietMs: 60, maxMs: 1000 }); const d = Date.now() - t0
+  assert.ok(d >= 55 && d < 400, `waited ${d} ms`)
+})
+await t('waitQuiet: every event restarts the quiet period', async () => {
+  let fire; const t0 = Date.now()
+  const p = E.waitQuiet((cb) => { fire = cb; return () => {} }, { quietMs: 80, maxMs: 2000 })
+  for (let i = 0; i < 4; i++) { await new Promise((r) => setTimeout(r, 50)); fire() }
+  await p; const d = Date.now() - t0
+  assert.ok(d >= 200 + 75, `returned after only ${d} ms although events kept arriving`)
+})
+await t('waitQuiet: a constant stream of events is cut off by maxMs', async () => {
+  let fire; const t0 = Date.now()
+  const p = E.waitQuiet((cb) => { fire = cb; return () => {} }, { quietMs: 100, maxMs: 300 })
+  const iv = setInterval(() => fire(), 20); await p; clearInterval(iv)
+  const d = Date.now() - t0; assert.ok(d >= 290 && d < 700, `waited ${d} ms`)
+})
+await t('waitQuiet: the subscription is released afterwards', async () => {
+  let released = 0; await E.waitQuiet(() => () => { released++ }, { quietMs: 20, maxMs: 200 }); assert.equal(released, 1)
+})
+await t('waitQuiet: a host without events, or one that throws on subscribe, never blocks beyond quietMs', async () => {
+  const a = Date.now(); await E.waitQuiet(undefined, { quietMs: 30, maxMs: 500 }); assert.ok(Date.now() - a < 300)
+  const b = Date.now(); await E.waitQuiet(() => { throw new Error('no events') }, { quietMs: 30, maxMs: 500 }); assert.ok(Date.now() - b < 300)
+})
+
 await t('failure: enabling fails after a good install -> reported, and says it IS installed', async () => {
   const pm = createFakePm([], { 'dsh-media': { enableFails: true } })
   const r = await E.installOne(pm, by('dsh-media'), { installed: false })
