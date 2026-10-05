@@ -219,6 +219,49 @@ await t('cooldown: a missing or garbage time means "no warning", never a crash',
   for (const x of [undefined, null, '', 'soon']) assert.deepEqual(E.cooldownState(x), { active: false, endsAt: undefined })
 })
 
+// ── plugins replaced under a running page (the real boot crash; see engine.js trackLoadedChanges) ──
+const B = (name, version, installed = true) => ({ name, version, installed })
+const track = (...lists) => lists.reduce((s, l) => E.trackLoadedChanges(s, l), null)
+await t('replaced-plugin tracker: the first look is only a baseline, never an alarm', () => {
+  const s = track([B('dsh-media', '0.1.3'), B('dsh-film', '0.3.0')])
+  assert.deepEqual(s.dirty, []); assert.deepEqual(s.prev, { 'dsh-media': '0.1.3', 'dsh-film': '0.3.0' })
+})
+await t('REAL crash 2: all four uninstalled, then installed again at the same versions -> all four flagged', () => {
+  const four = [B('dsh-media', '0.1.3'), B('dsh-film', '0.3.0'), B('@vibedev-si/dsh-media-viewer', '0.1.0'), B('@vibedev-si/dsh-ecosystem', '0.1.1')]
+  const s = track(four, [], four)
+  assert.deepEqual(s.dirty.sort(), four.map((b) => b.name).sort())
+})
+await t('REAL crash 1: only the plugin that was loaded at start and then reinstalled is flagged; newly added ones are not', () => {
+  const s = track([B('dsh-media', '0.1.3')], [], [B('dsh-media', '0.1.3')], [B('dsh-media', '0.1.3'), B('dsh-film', '0.3.0'), B('@vibedev-si/dsh-media-viewer', '0.1.0')])
+  assert.deepEqual(s.dirty, ['dsh-media'])
+})
+await t('REAL 20:48 refresh that did NOT crash: a plugin that was removed (and stayed removed) and a brand-new one -> no alarm', () => {
+  const s = track([B('dsh-media', '0.1.3')], [], [B('@vibedev-si/dsh-ecosystem', '0.1.0')])
+  assert.deepEqual(s.dirty, [])
+})
+await t('an update in place (version changed) is flagged; so is a downgrade', () => {
+  assert.deepEqual(track([B('dsh-media', '0.1.2')], [B('dsh-media', '0.1.3')]).dirty, ['dsh-media'])
+  assert.deepEqual(track([B('dsh-media', '0.1.3')], [B('dsh-media', '0.1.2')]).dirty, ['dsh-media'])
+})
+await t('NO alarm for: a first install, a removal alone, disabling and enabling, or the same list seen again', () => {
+  assert.deepEqual(track([], [B('dsh-media', '0.1.3')]).dirty, [])
+  assert.deepEqual(track([B('dsh-media', '0.1.3')], []).dirty, [])
+  const off = { ...B('dsh-media', '0.1.3'), enabled: false }, on = { ...B('dsh-media', '0.1.3'), enabled: true }
+  assert.deepEqual(track([on], [off], [on]).dirty, [])
+  assert.deepEqual(track([B('dsh-media', '0.1.3')], [B('dsh-media', '0.1.3')], [B('dsh-media', '0.1.3')]).dirty, [])
+})
+await t('entries that are not installed (listed but absent) are ignored', () => {
+  assert.deepEqual(track([B('dsh-media', '0.1.3', false)], [B('dsh-media', '0.1.3')]).dirty, [])
+})
+await t('once flagged it stays flagged until the page is gone (a restart makes a new page), and flags accumulate', () => {
+  const s = track([B('a', '1.0.0'), B('b', '1.0.0')], [B('a', '1.0.1'), B('b', '1.0.0')], [B('a', '1.0.1'), B('b', '1.0.0')], [B('a', '1.0.1')], [B('a', '1.0.1'), B('b', '1.0.0')])
+  assert.deepEqual(s.dirty.sort(), ['a', 'b'])
+})
+await t('hostile or broken input never throws', () => {
+  for (const bad of [undefined, null, [], [null], [{}], [{ installed: true }], [{ name: 5, installed: true }]]) assert.doesNotThrow(() => E.trackLoadedChanges(null, bad))
+  assert.doesNotThrow(() => E.trackLoadedChanges({ prev: { a: '1' } }, undefined))
+})
+
 await t('failure: enabling fails after a good install -> reported, and says it IS installed', async () => {
   const pm = createFakePm([], { 'dsh-media': { enableFails: true } })
   const r = await E.installOne(pm, by('dsh-media'), { installed: false })

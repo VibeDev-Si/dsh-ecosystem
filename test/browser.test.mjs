@@ -635,6 +635,70 @@ try {
     ok('update confirm after the cooldown: no warning, just the plain reassurance', !(await outside.evaluate(() => !!document.querySelector('[data-testid=cooldown-note]'))) && (await text(outside)).includes('更新不会改动你的工作区里的项目文件'))
     await outside.close()
   }
+
+  // 20 ── the desktop boot crash: a page reloaded after a plugin it had at start was replaced. Warn; never offer a reload.
+  const noRefresh = (page) => page.evaluate(() => { const el = document.querySelector('[data-testid=no-refresh]'); return el ? el.innerText : null })
+  const bundle = (name, version) => ({ name, version, installed: true, enabled: true })
+  const setBundles = (page, list, fire = true) => page.evaluate((l, f) => { const m = window.__pm.bundles; m.clear(); for (const b of l) m.set(b.name, b); if (f) window.__fireChanged() }, list, fire)
+  {
+    // YOUR run: the four plugins were there when VibeDev started, were all uninstalled, then installed again.
+    const four = [bundle('dsh-media', '0.1.3'), bundle('dsh-film', '0.3.0'), bundle('@vibedev-si/dsh-media-viewer', '0.1.0'), bundle('@vibedev-si/dsh-ecosystem', '0.1.1')]
+    const { page } = await boot({ initial: four })
+    ok('at the start there is no notice (the first look is only a baseline)', (await noRefresh(page)) === null)
+    await setBundles(page, []); await sleep(150)
+    ok('removing them all raises no alarm yet (a removed plugin is not loaded again)', (await noRefresh(page)) === null)
+    await setBundles(page, four); await sleep(200)
+    const n = await noRefresh(page)
+    ok('putting them back raises the notice, naming every plugin', !!n && n.includes('VibeDev 媒体生成') && n.includes('VibeDev 影视工作台') && n.includes('媒体预览与画廊'), n && n.replace(/\n/g, ' | ').slice(0, 160))
+    ok('it says not to reload, why, and to restart', !!n && n.includes('请不要刷新页面') && n.includes('启动那一刻的插件清单') && n.includes('完全退出并重新打开 VibeDev'))
+    ok('there is nothing on the page that reloads it', !(await page.evaluate(() => [...document.querySelectorAll('button')].some((b) => /刷新|Reload/.test(b.textContent)))))
+    await shot(page, '30-no-refresh-notice'); await page.close()
+  }
+  {
+    // The normal first-time install of the whole suite must stay silent: those plugins were not loaded at start.
+    const { page } = await boot({ initial: [bundle('dsh-better-sidebar', '0.24.1')] })
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成'); await sleep(200)
+    ok('a first-time suite install does NOT show the notice (it was safe on the real machine)', (await noRefresh(page)) === null)
+    await page.close()
+  }
+  {
+    // An update replaces files of a plugin that was loaded at start.
+    const { page } = await boot({ initial: [bundle('dsh-media', '0.1.2'), bundle('dsh-better-sidebar', '0.24.1')] })
+    await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.warn').click()); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装')
+    await page.waitForFunction(() => !!document.querySelector('[data-testid=no-refresh]'), { timeout: 8000 })
+    ok('an update through the center raises the notice', (await noRefresh(page)).includes('VibeDev 媒体生成'))
+    await page.close()
+  }
+  {
+    // The migration: the old package goes away, the new one is new. Neither was "put back".
+    const { page } = await boot({ initial: [bundle('dsh-media-viewer', '0.1.0'), bundle('dsh-better-sidebar', '0.24.1')] })
+    await clickText(page, '一键切换'); await page.waitForSelector('[data-testid=mig-result]', { timeout: 10000 }); await sleep(200)
+    ok('migrating the old package name does NOT show the notice', (await noRefresh(page)) === null)
+    await page.close()
+  }
+  {
+    // Disabling and enabling touch no files.
+    const { page } = await boot({ initial: [bundle('dsh-media', '0.1.3'), bundle('dsh-better-sidebar', '0.24.1')] })
+    await setBundles(page, [{ ...bundle('dsh-media', '0.1.3'), enabled: false }, bundle('dsh-better-sidebar', '0.24.1')]); await sleep(120)
+    await setBundles(page, [bundle('dsh-media', '0.1.3'), bundle('dsh-better-sidebar', '0.24.1')]); await sleep(150)
+    ok('disabling and enabling a plugin does NOT show the notice', (await noRefresh(page)) === null)
+    await page.close()
+  }
+  {
+    // A hostile plugin name is shown as text, never as markup.
+    const evil = '<img src=x onerror="window.__pwned=1">'
+    const { page } = await boot({ initial: [bundle(evil, '1.0.0')] })
+    await setBundles(page, [bundle(evil, '1.0.1')]); await sleep(200)
+    ok('a hostile plugin name is rendered as text and runs nothing', (await noRefresh(page)).includes('<img src=x') && !(await page.evaluate(() => window.__pwned)) && !(await page.evaluate(() => !!document.querySelector('[data-testid=no-refresh] img'))))
+    await page.close()
+  }
+  {
+    const { page } = await boot({ locale: 'en', initial: [bundle('dsh-media', '0.1.2')] })
+    await setBundles(page, [bundle('dsh-media', '0.1.3')]); await sleep(200)
+    const n = await noRefresh(page)
+    ok('English notice is fully English', !!n && !/[\u4e00-\u9fff]/.test(n) && n.includes('Do not reload the page') && n.includes('quit VibeDev completely'), n && n.slice(0, 90))
+    await page.close()
+  }
 } catch (e) {
   ok('test run completed without throwing', false, String(e && e.stack || e))
 } finally {

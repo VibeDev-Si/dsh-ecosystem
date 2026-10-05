@@ -159,12 +159,19 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const aborter = useRef(null)
     const [selfUpd, setSelfUpd] = useState(null) // null | {kind:'checking'} | judgeSelfUpdate(...)
     const [copied, setCopied] = useState(false)
+    // Plugins replaced underneath this page (updated, or removed and put back). See engine.trackLoadedChanges.
+    const tracker = useRef({ prev: null, removed: [], dirty: [] })
+    const [replaced, setReplaced] = useState([])
 
     const refresh = useCallback(async () => {
       if (!host.pm) { setBundles(false); return }
       try {
         const r = await host.pm.listBundles()
         setBundles(r?.ok ? r.value : false)
+        if (r?.ok) {
+          tracker.current = E.trackLoadedChanges(tracker.current, r.value)
+          setReplaced((old) => (old.length === tracker.current.dirty.length ? old : tracker.current.dirty))
+        }
       } catch { setBundles(false) }
     }, [])
     useEffect(() => { refresh(); return host.onChanged?.(refresh) }, [refresh])
@@ -321,6 +328,14 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
             h('small', { key: 's' }, S.suiteWill(todo.length, items.length - todo.length, filmish ? '~12 MB' : S.sizeSmall))]
           : h('span', { className: 'btn ok big' }, I.check(), ' ', S.suiteDone)),
         h('div', { className: 'chips' }, chips))
+    }
+
+    // Shown for as long as this page lives: a restart makes a new page and the notice goes away by itself.
+    const NoRefresh = () => {
+      if (!replaced.length) return null
+      const names = replaced.map((n) => { const p = PLUGINS.find((x) => x.npm === n); return p ? L(p.name, lang) : n }).join(lang === 'zh' ? '\u3001' : ', ')
+      return h('div', { className: 'banner', 'data-testid': 'no-refresh', role: 'alert' }, I.warn(),
+        h('div', { className: 'grow' }, h('b', null, S.noRefreshT), h('small', null, S.noRefreshB(names))))
     }
 
     const SelfUpdate = () => {
@@ -556,7 +571,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         h('span', { className: 'sp' }), host.checkLatest ? h('button', { className: 'ghost', 'data-testid': 'check-update', disabled: selfUpd?.kind === 'checking', onClick: checkSelf }, S.checkUpdate) : null, h('button', { className: 'ghost', onClick: () => setIntro(!intro) }, S.about)),
       h('div', { className: 'scroll' }, h('div', { className: 'wrap' },
         bundles === false && h('div', { className: 'banner', 'data-testid': 'no-manager' }, I.warn(), h('div', { className: 'grow' }, h('b', null, S.loadFail), h('small', null, host.pm ? S.loadFailB : S.noManager))),
-        Banner(), SelfUpdate(), Main(),
+        NoRefresh(), Banner(), SelfUpdate(), Main(),
         h('div', { className: 'foot' }, h('span', null, S.footMore, h('button', { className: 'lnk', onClick: () => (marketIn ? setView('community') : openInstall([MARKET], `${S.install} ${L(byId(MARKET).name, lang)}`)) }, marketIn ? S.openMarket.replace(' →', '') : S.installMarket.replace(' →', ''))),
           h('span', null, S.footFeedback, ' ', h('button', { className: 'lnk', onClick: () => host.openUrl?.('https://github.com/VibeDev-Si/dsh-ecosystem/issues') }, 'VibeDev-Si · GitHub')), h('span', null, S.footCatalog(catalog.updated))))),
       Drawer(),

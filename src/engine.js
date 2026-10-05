@@ -132,12 +132,34 @@ export function cooldownState(publishedAtIso, now = Date.now()) {
   return endsAt === undefined ? { active: false, endsAt: undefined } : { active: now < endsAt.getTime(), endsAt }
 }
 
-/* ── let the host finish applying a change before the next one, and before telling the user it is done ──────────
- * Every enable makes the host rebuild its module graph and push it to the open page. A real user installed the whole
- * suite (four enables in about 25 s) and pressed our "reload" button seconds after the last one: the booting page then
- * failed to load one of the plugins and the desktop shell showed its crash dialog. The exact trigger is not proven, but
- * reloading in the middle of the host's own update is the one thing we did that the official Plugins page never does.
- * So: wait until no change event has arrived for `quietMs` (never longer than `maxMs`), and never reload for the user. */
+/* ── plugins replaced underneath a running page (the cause of the desktop boot crash) ───────────────────────────────
+ * Verified on a real machine, twice: the desktop shell hands the page the plugin list (script URLs with a revision that is
+ * a hash of each bundle's mtime, ctime and size) that the Host produced WHEN VIBEDEV STARTED, and reuses it for every
+ * reload. The Host serves only the CURRENT revision, so a plugin whose files changed since then (uninstalled and
+ * installed again, or updated) is requested under its old revision, gets a 404, and the shell reports "N entries did not
+ * activate". Plugins that were merely installed for the first time while VibeDev was running are fine, and so is removal
+ * alone. So the dangerous events are: a plugin whose version changed, and a plugin that disappeared and came back.
+ * state = {prev: {name: version} | null, removed: [name], dirty: [name]}; pure, returns the next state. */
+export function trackLoadedChanges(state, bundles) {
+  const cur = {}
+  for (const b of bundles ?? []) if (b?.installed && typeof b.name === 'string') cur[b.name] = String(b.version ?? '')
+  const prev = state?.prev ?? null
+  if (prev === null) return { prev: cur, removed: [], dirty: [] } // the first look is the baseline, never an alarm
+  const removed = new Set(state.removed ?? [])
+  const dirty = new Set(state.dirty ?? [])
+  for (const name of Object.keys(prev)) if (!(name in cur)) removed.add(name)
+  for (const name of Object.keys(cur)) {
+    if (name in prev && prev[name] !== cur[name]) dirty.add(name) // updated or downgraded in place
+    else if (!(name in prev) && removed.has(name)) dirty.add(name) // came back after being removed
+  }
+  return { prev: cur, removed: [...removed], dirty: [...dirty] }
+}
+
+/* ── a courtesy pause between plugins and before saying "done" ───────────────────────────────────────────────────
+ * NOT the fix for the boot crash. That crash is not about timing at all: see trackLoadedChanges below (the desktop
+ * page boots from a plugin list taken when VibeDev STARTED, so reloading after a plugin was replaced fails whether it
+ * happens 5 seconds or 5 hours later). This only lets the host settle so the done screen is not shown while it is still
+ * busy. It waits until no change event has arrived for `quietMs` (never longer than `maxMs`). */
 export function waitQuiet(subscribe, opts = {}) {
   const quietMs = opts.quietMs ?? 2000
   const maxMs = opts.maxMs ?? 10000
