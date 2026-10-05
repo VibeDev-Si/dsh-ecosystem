@@ -129,6 +129,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const lang = pick(host.locale?.())
     LANG = lang
     const S = STR[lang]
+    const [, bumpLocale] = useState(0)
+    useEffect(() => (host.onLocale ? host.onLocale(() => bumpLocale((n) => n + 1)) : undefined), [])
     const [bundles, setBundles] = useState(null) // null = loading, false = unavailable
     const [view, setView] = useState('all')
     const [intro, setIntro] = useState(true)
@@ -177,7 +179,9 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       setModal({ mode: 'run', run: { ...run } })
       const upd = () => setModal({ mode: 'run', run: { ...run, rows: run.rows.map((r) => ({ ...r })) } })
       const todo = run.rows.filter((r) => r.st !== 'skip')
-      run.log.push(`start: ${todo.length}`)
+      // Like the official Plugins page: ask the host which registry answers fastest (it matters on mainland-China networks).
+      const registry = (await host.fastestRegistry?.()) ?? null
+      run.log.push(`start: ${todo.length}`, `registry: ${registry || 'default'}`)
       const results = []
       for (const row of run.rows) {
         if (row.st === 'skip') continue
@@ -186,6 +190,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         const state = update ? { installed: true, enabled: row.enabled } : row
         const r = await E.installOne(host.pm, row.entry, state, {
           update,
+          registry,
           approvedBuilds: run.approved[row.entry.id],
           hooks: {
             onStep: (s) => { row.sub = s === 'inspect' ? S.stInspect : s === 'install' ? S.stInstall : S.stEnable; run.log.push(`${s} ${E.specOf(row.entry)}`); upd() },
@@ -213,7 +218,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 
     const doMigrate = async (x) => {
       setModal({ mode: 'migrate', x, phase: 'run', step: 'inspect' })
-      const r = await E.migrate(host.pm, x.entry, x.legacy, { hooks: { onStep: (s) => setModal((m) => (m && m.mode === 'migrate' ? { ...m, step: s } : m)) } })
+      const registry = (await host.fastestRegistry?.()) ?? null
+      const r = await E.migrate(host.pm, x.entry, x.legacy, { registry, hooks: { onStep: (s) => setModal((m) => (m && m.mode === 'migrate' ? { ...m, step: s } : m)) } })
       await refresh()
       setModal({ mode: 'migrate', x, phase: 'done', result: r })
     }
@@ -398,7 +404,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
     const failText = (f) => {
       switch (f.kind) {
-        case 'network': return [S.fNetworkT, S.fNetworkB, 'err']
+        case 'network': return [S.fNetworkT, S.fNetworkB(f.registries ? f.registries.length : 0, f.diagnostic), 'err']
         case 'builds': return [S.fBuildsT, S.fBuildsB(f.pendingBuilds.join(', ')), 'warn']
         case 'incompat': return [S.fIncompatT, S.fIncompatB((f.incompatible || []).map((x) => `${x.name}@${x.version}: ${x.runtimeVersion} (${Object.entries(x.peers).map(([a, b]) => `${a} ${b}`).join(', ')}). `).join('')), 'err']
         case 'notfound': return [S.fNotFoundT, S.fNotFoundB, 'err']

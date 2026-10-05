@@ -80,7 +80,7 @@ function classifyFailure(result) {
     const m = /([@\w./-]+@[\w.-]+) was published at ([0-9T:.\-]+Z)/.exec(log)
     return { kind: 'exempt', culprit: m?.[1], publishedAt: m?.[2] }
   }
-  if (kind === 'network' || kind === 'timeout') return { kind: 'network' }
+  if (kind === 'network' || kind === 'timeout') return { kind: 'network', registries: result?.registries, diagnostic: err?.diagnostic ?? '' }
   if (kind === 'not-found' || kind === 'no-matching-version') return { kind: 'notfound' }
   if (err?.code === 'stop-profile' || err?.code === 'bundle-in-use') return { kind: 'busy', code: err.code }
   return { kind: 'failed', code: err?.code, diagnostic: err?.diagnostic ?? result?.packageResult?.output ?? '' }
@@ -133,7 +133,7 @@ async function installOne(pm, entry, state, opts = {}) {
   const installedAlready = v.status === 'refused' && v.problem === 'already-installed'
   if (v.status === 'refused' && !(update && installedAlready)) {
     if (installedAlready) return { status: 'skipped' }
-    return { status: 'failed', failure: { kind: v.problem === 'network' ? 'network' : v.problem === 'not-found' ? 'notfound' : 'refused', problem: v.problem, diagnostic: v.reason } }
+    return { status: 'failed', failure: { kind: v.problem === 'network' ? 'network' : v.problem === 'not-found' ? 'notfound' : 'refused', problem: v.problem, diagnostic: v.reason, registries: v.registries } }
   }
   if (v.status === 'accepted' && (v.name !== entry.npm || (v.version && v.version !== entry.version) || v.bundle === false)) {
     // The registry answered with something other than what the catalog promised. Do not install it.
@@ -325,7 +325,7 @@ const STR = {
     restartTitle: '安装完成，需要重启', restartHead: '已安装，但需要重启 VibeDev 才能生效',
     restartBody: (n) => `${n} 个插件已写入配置。插件中心不会替你重启应用；请先保存手头的工作，再完全退出并重新打开。`,
     failTitle: '安装未完成',
-    fNetworkT: '无法下载插件', fNetworkB: '已依次尝试 npm 官方源和国内镜像，都没有连上。请检查网络或代理后重试。',
+    fNetworkT: '无法下载插件', fNetworkB: (n, d) => `${n > 1 ? `已依次尝试 ${n} 个源，都没有连上。` : '没能连上 npm 源。'}请检查网络或代理后重试。${d ? `（${String(d).slice(0, 140)}）` : ''}`,
     fBuildsT: '这个插件的依赖需要执行构建脚本', fBuildsB: (names) => `待你决定的包：${names}。构建脚本会以你的用户权限运行命令，请只在信任来源时允许。`,
     fIncompatT: '当前 VibeDev 版本不满足要求', fIncompatB: (s) => `${s}已拦截安装，没有下载任何内容。`,
     fNotFoundT: '在 npm 上找不到这个版本', fNotFoundB: '目录里登记的版本可能已被撤回或还没同步到镜像。请稍后重试，或到 GitHub 反馈。',
@@ -408,7 +408,7 @@ const STR = {
     restartTitle: 'Installed, restart needed', restartHead: 'Installed, but VibeDev must restart to take effect',
     restartBody: (n) => `${n} plugin(s) were written to your configuration. The center will not restart the app for you; save your work, then quit completely and reopen.`,
     failTitle: 'Install not finished',
-    fNetworkT: 'Could not download the plugin', fNetworkB: 'The official npm registry and the China mirror were both tried and neither answered. Check your network or proxy and retry.',
+    fNetworkT: 'Could not download the plugin', fNetworkB: (n, d) => `${n > 1 ? `${n} registries were tried and none answered.` : 'Could not reach the npm registry.'} Check your network or proxy and retry.${d ? ` (${String(d).slice(0, 140)})` : ''}`,
     fBuildsT: "This plugin's dependencies need to run build scripts", fBuildsB: (names) => `Packages waiting for your decision: ${names}. Build scripts run commands with your user's permissions; allow them only if you trust the source.`,
     fIncompatT: 'This VibeDev version does not meet the requirements', fIncompatB: (s) => `${s}Install was blocked and nothing was downloaded.`,
     fNotFoundT: 'That version was not found on npm', fNotFoundB: 'The version in the catalog may have been withdrawn or not yet mirrored. Retry later, or report it on GitHub.',
@@ -576,6 +576,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const lang = pick(host.locale?.())
     LANG = lang
     const S = STR[lang]
+    const [, bumpLocale] = useState(0)
+    useEffect(() => (host.onLocale ? host.onLocale(() => bumpLocale((n) => n + 1)) : undefined), [])
     const [bundles, setBundles] = useState(null) // null = loading, false = unavailable
     const [view, setView] = useState('all')
     const [intro, setIntro] = useState(true)
@@ -624,7 +626,9 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       setModal({ mode: 'run', run: { ...run } })
       const upd = () => setModal({ mode: 'run', run: { ...run, rows: run.rows.map((r) => ({ ...r })) } })
       const todo = run.rows.filter((r) => r.st !== 'skip')
-      run.log.push(`start: ${todo.length}`)
+      // Like the official Plugins page: ask the host which registry answers fastest (it matters on mainland-China networks).
+      const registry = (await host.fastestRegistry?.()) ?? null
+      run.log.push(`start: ${todo.length}`, `registry: ${registry || 'default'}`)
       const results = []
       for (const row of run.rows) {
         if (row.st === 'skip') continue
@@ -633,6 +637,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         const state = update ? { installed: true, enabled: row.enabled } : row
         const r = await E.installOne(host.pm, row.entry, state, {
           update,
+          registry,
           approvedBuilds: run.approved[row.entry.id],
           hooks: {
             onStep: (s) => { row.sub = s === 'inspect' ? S.stInspect : s === 'install' ? S.stInstall : S.stEnable; run.log.push(`${s} ${E.specOf(row.entry)}`); upd() },
@@ -660,7 +665,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 
     const doMigrate = async (x) => {
       setModal({ mode: 'migrate', x, phase: 'run', step: 'inspect' })
-      const r = await E.migrate(host.pm, x.entry, x.legacy, { hooks: { onStep: (s) => setModal((m) => (m && m.mode === 'migrate' ? { ...m, step: s } : m)) } })
+      const registry = (await host.fastestRegistry?.()) ?? null
+      const r = await E.migrate(host.pm, x.entry, x.legacy, { registry, hooks: { onStep: (s) => setModal((m) => (m && m.mode === 'migrate' ? { ...m, step: s } : m)) } })
       await refresh()
       setModal({ mode: 'migrate', x, phase: 'done', result: r })
     }
@@ -845,7 +851,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
     const failText = (f) => {
       switch (f.kind) {
-        case 'network': return [S.fNetworkT, S.fNetworkB, 'err']
+        case 'network': return [S.fNetworkT, S.fNetworkB(f.registries ? f.registries.length : 0, f.diagnostic), 'err']
         case 'builds': return [S.fBuildsT, S.fBuildsB(f.pendingBuilds.join(', ')), 'warn']
         case 'incompat': return [S.fIncompatT, S.fIncompatB((f.incompatible || []).map((x) => `${x.name}@${x.version}: ${x.runtimeVersion} (${Object.entries(x.peers).map(([a, b]) => `${a} ${b}`).join(', ')}). `).join('')), 'err']
         case 'notfound': return [S.fNotFoundT, S.fNotFoundB, 'err']
@@ -980,6 +986,17 @@ async function runSelfCheck(ctx, panelId, catalog, errs, version) {
   try { add('locale', ctx.locale.getLocale()) } catch (e) { add('locale', { threw: String(e) }) }
 
   if (pm) {
+    await safe('registries()', async () => { const r = await pm.registries(); return r && r.ok ? r.value : { ok: false, error: r && r.error } })
+    // The official page asks the host which registry answers fastest; so do we.
+    let fastest = null
+    await safe('registryProbe', async () => {
+      const pr = ctx.remote.pluginRegistryProbe
+      if (!pr || typeof pr.fastest !== 'function') return { present: false }
+      const t0 = Date.now()
+      const r = await pr.fastest()
+      fastest = r && typeof r === 'object' && 'ok' in r ? (r.ok ? r.value : null) : r
+      return { present: true, ms: Date.now() - t0, raw: r }
+    })
     await safe('listBundles', async () => {
       const r = await pm.listBundles()
       if (!r || !r.ok) return { ok: false, error: r && r.error }
@@ -993,15 +1010,14 @@ async function runSelfCheck(ctx, panelId, catalog, errs, version) {
       }
     })
     // Read-only: asks the host what a spec points at. Used to confirm the real response shape.
-    await safe('inspect.notInstalled', async () => {
-      const r = await pm.inspect('@vibedev-si/dsh-media-viewer@0.1.0', { registry: null })
-      return r && r.ok ? { ok: true, value: r.value } : { ok: false, error: r && r.error }
-    })
-    await safe('inspect.installedName', async () => {
-      const probe = catalog.plugins.find((p) => p.id === 'dsh-better-sidebar')
-      const r = await pm.inspect(probe.npm + '@' + probe.version, { registry: null })
-      return r && r.ok ? { ok: true, value: r.value } : { ok: false, error: r && r.error }
-    })
+    const timed = async (spec, registry) => {
+      const t0 = Date.now()
+      const r = await pm.inspect(spec, { registry })
+      return { ms: Date.now() - t0, ...(r && r.ok ? { ok: true, value: r.value } : { ok: false, error: r && r.error }) }
+    }
+    await safe('inspect.notInstalled.defaultRegistry', () => timed('@vibedev-si/dsh-media-viewer@0.1.0', null))
+    await safe('inspect.notInstalled.probedRegistry', () => timed('@vibedev-si/dsh-media-viewer@0.1.0', fastest))
+    await safe('inspect.installedName', () => { const probe = catalog.plugins.find((p) => p.id === 'dsh-better-sidebar'); return timed(probe.npm + '@' + probe.version, null) })
   }
 
   // Prove the panel mounts inside the real shell.
@@ -1015,11 +1031,23 @@ async function runSelfCheck(ctx, panelId, catalog, errs, version) {
     add('panel.mounted', !!el)
     if (el) {
       const box = el.getBoundingClientRect()
-      const root = getComputedStyle(document.documentElement)
+      const cs = getComputedStyle(el)
+      const vars = ['--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-brand-primary', '--dsw-alias-label-primary', '--dsw-alias-border-l1']
+      const read = (node) => vars.map((v) => [v, getComputedStyle(node).getPropertyValue(v).trim() || null])
       add('panel.size', [Math.round(box.width), Math.round(box.height)])
       add('panel.cards', el.querySelectorAll('.card').length)
       add('panel.text', el.innerText.slice(0, 120))
-      add('theme.vars', ['--dsw-alias-bg-base', '--dsw-alias-brand-primary', '--dsw-alias-label-primary'].map((v) => [v, root.getPropertyValue(v).trim() || null]))
+      // Read FROM THE PANEL (variables inherit), and from its ancestors, to learn where the shell defines them.
+      add('theme.onPanel', read(el))
+      add('theme.onBody', read(document.body))
+      add('theme.onHtml', read(document.documentElement))
+      add('theme.resolved', { '--bg': cs.getPropertyValue('--bg').trim(), '--brand': cs.getPropertyValue('--brand').trim(), panelBackground: cs.backgroundColor, panelColor: cs.color, bodyBackground: getComputedStyle(document.body).backgroundColor })
+      add('theme.hooks', {
+        htmlClass: document.documentElement.className, htmlData: Object.assign({}, document.documentElement.dataset),
+        bodyClass: document.body.className, bodyData: Object.assign({}, document.body.dataset),
+        prefersDark: typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)').matches : null,
+      })
+      try { add('theme.snapshot', JSON.stringify(ctx.theme.getTheme()).slice(0, 600)) } catch (e) { add('theme.snapshot', 'unavailable: ' + String(e && e.message || e)) }
       add('panel.scrollable', (() => { const s = el.querySelector('.scroll'); return s ? s.scrollHeight > s.clientHeight || s.clientHeight > 0 : null })())
     }
   } catch (e) { add('panel.error', String(e && e.message || e)) }
@@ -1049,7 +1077,19 @@ function PanelIcon(size) {
 function apply(ctx) {
   var Center = createCenter(React, CATALOG, {
     get pm() { try { return ctx.remote.pluginManager; } catch (e) { return undefined; } },
-    locale: function () { try { var l = ctx.locale.getLocale(); return (l && l.id) || l; } catch (e) { return "zh"; } },
+    // The real getLocale() returns { active: "zh", locales: [...], revision } (read from a live self-check), not { id }.
+    locale: function () { try { var l = ctx.locale.getLocale(); return (l && (l.active || l.id)) || "zh"; } catch (e) { return "zh"; } },
+    onLocale: function (fn) { try { return ctx.locale.subscribe(fn); } catch (e) { return function () {}; } },
+    // The official Plugins page asks the host which registry answers fastest (matters a lot on mainland-China networks).
+    fastestRegistry: function () {
+      try {
+        var pr = ctx.remote.pluginRegistryProbe;
+        if (!pr || typeof pr.fastest !== "function") return Promise.resolve(null);
+        var ask = Promise.resolve(pr.fastest()).then(function (r) { return r && typeof r === "object" && "ok" in r ? (r.ok ? r.value : null) : r; });
+        var cap = new Promise(function (res) { setTimeout(function () { res(null); }, 8000); });
+        return Promise.race([ask, cap]).then(function (v) { return typeof v === "string" ? v : null; }, function () { return null; });
+      } catch (e) { return Promise.resolve(null); }
+    },
     onChanged: function (fn) { try { return ctx.remote.$on("plugin-manager/changed", fn); } catch (e) { return function () {}; } },
     openUrl: function (u) { window.open(u, "_blank", "noopener"); },
     copy: function (t) { try { navigator.clipboard && navigator.clipboard.writeText(t); } catch (e) {} },

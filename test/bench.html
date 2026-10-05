@@ -22,9 +22,15 @@
     var calls = []; window.__calls = calls;
     var fake = opts.fake;                         // a function name => impl map, built in the test
     var listeners = [];
+    var localeListeners = [];
     var ctx = {
       effect: function (fn) { var r = fn(); window.__reg.effects.push(typeof r); return r },
-      locale: { register: function () { return function () {} }, bind: function () { return function (k) { return k } }, getLocale: function () { return { id: opts.locale || 'zh' } } },
+      // The REAL getLocale() shape (read from a live self-check): { active, locales, revision } - NOT { id }.
+      locale: {
+        register: function () { return function () {} }, bind: function () { return function (k) { return k } },
+        getLocale: function () { return { active: window.__localeActive || opts.locale || 'zh', locales: [{ id: 'zh', label: '中文', fallback: 'en' }, { id: 'en', label: 'English' }], revision: 1 } },
+        subscribe: function (fn) { localeListeners.push(fn); return function () { localeListeners = localeListeners.filter(function (x) { return x !== fn }) } },
+      },
       slots: {
         // The real host RUNS the callback; a generator callback yields its registrations (disposers).
         inject: function (name, fn) {
@@ -35,10 +41,16 @@
         },
         register: function (decl, comp) { window.__reg.slots.push({ decl: decl, comp: comp }); return function () {} },
       },
-      remote: { pluginManager: window.__pm, $on: function (ev, fn) { listeners.push([ev, fn]); return function () {} } },
+      remote: {
+        pluginManager: window.__pm,
+        // The host's registry probe: answers { ok, value } like the other remote calls.
+        pluginRegistryProbe: opts.noProbe ? undefined : { fastest: function () { window.__probeCalls = (window.__probeCalls || 0) + 1; return Promise.resolve({ ok: true, value: opts.fastest === undefined ? 'https://registry.npmmirror.com' : opts.fastest }) } },
+        $on: function (ev, fn) { listeners.push([ev, fn]); return function () {} },
+      },
       reflect: { get: function (k) { return k === 'market' && opts.market ? { render: function () { return window.React.createElement('div', { 'data-testid': 'market-embed' }, 'EMBEDDED MARKET UI') } } : undefined } },
     };
     window.__ctx = ctx; window.__listeners = listeners;
+    window.__setLocale = function (id) { window.__localeActive = id; localeListeners.slice().forEach(function (f) { f() }) };
     mod.apply(ctx);
     return true;
   };

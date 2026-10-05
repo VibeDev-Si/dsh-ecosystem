@@ -62,7 +62,19 @@ function PanelIcon(size) {
 function apply(ctx) {
   var Center = createCenter(React, CATALOG, {
     get pm() { try { return ctx.remote.pluginManager; } catch (e) { return undefined; } },
-    locale: function () { try { var l = ctx.locale.getLocale(); return (l && l.id) || l; } catch (e) { return "zh"; } },
+    // The real getLocale() returns { active: "zh", locales: [...], revision } (read from a live self-check), not { id }.
+    locale: function () { try { var l = ctx.locale.getLocale(); return (l && (l.active || l.id)) || "zh"; } catch (e) { return "zh"; } },
+    onLocale: function (fn) { try { return ctx.locale.subscribe(fn); } catch (e) { return function () {}; } },
+    // The official Plugins page asks the host which registry answers fastest (matters a lot on mainland-China networks).
+    fastestRegistry: function () {
+      try {
+        var pr = ctx.remote.pluginRegistryProbe;
+        if (!pr || typeof pr.fastest !== "function") return Promise.resolve(null);
+        var ask = Promise.resolve(pr.fastest()).then(function (r) { return r && typeof r === "object" && "ok" in r ? (r.ok ? r.value : null) : r; });
+        var cap = new Promise(function (res) { setTimeout(function () { res(null); }, 8000); });
+        return Promise.race([ask, cap]).then(function (v) { return typeof v === "string" ? v : null; }, function () { return null; });
+      } catch (e) { return Promise.resolve(null); }
+    },
     onChanged: function (fn) { try { return ctx.remote.$on("plugin-manager/changed", fn); } catch (e) { return function () {}; } },
     openUrl: function (u) { window.open(u, "_blank", "noopener"); },
     copy: function (t) { try { navigator.clipboard && navigator.clipboard.writeText(t); } catch (e) {} },

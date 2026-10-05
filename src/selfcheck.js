@@ -39,6 +39,17 @@ export async function runSelfCheck(ctx, panelId, catalog, errs, version) {
   try { add('locale', ctx.locale.getLocale()) } catch (e) { add('locale', { threw: String(e) }) }
 
   if (pm) {
+    await safe('registries()', async () => { const r = await pm.registries(); return r && r.ok ? r.value : { ok: false, error: r && r.error } })
+    // The official page asks the host which registry answers fastest; so do we.
+    let fastest = null
+    await safe('registryProbe', async () => {
+      const pr = ctx.remote.pluginRegistryProbe
+      if (!pr || typeof pr.fastest !== 'function') return { present: false }
+      const t0 = Date.now()
+      const r = await pr.fastest()
+      fastest = r && typeof r === 'object' && 'ok' in r ? (r.ok ? r.value : null) : r
+      return { present: true, ms: Date.now() - t0, raw: r }
+    })
     await safe('listBundles', async () => {
       const r = await pm.listBundles()
       if (!r || !r.ok) return { ok: false, error: r && r.error }
@@ -52,15 +63,14 @@ export async function runSelfCheck(ctx, panelId, catalog, errs, version) {
       }
     })
     // Read-only: asks the host what a spec points at. Used to confirm the real response shape.
-    await safe('inspect.notInstalled', async () => {
-      const r = await pm.inspect('@vibedev-si/dsh-media-viewer@0.1.0', { registry: null })
-      return r && r.ok ? { ok: true, value: r.value } : { ok: false, error: r && r.error }
-    })
-    await safe('inspect.installedName', async () => {
-      const probe = catalog.plugins.find((p) => p.id === 'dsh-better-sidebar')
-      const r = await pm.inspect(probe.npm + '@' + probe.version, { registry: null })
-      return r && r.ok ? { ok: true, value: r.value } : { ok: false, error: r && r.error }
-    })
+    const timed = async (spec, registry) => {
+      const t0 = Date.now()
+      const r = await pm.inspect(spec, { registry })
+      return { ms: Date.now() - t0, ...(r && r.ok ? { ok: true, value: r.value } : { ok: false, error: r && r.error }) }
+    }
+    await safe('inspect.notInstalled.defaultRegistry', () => timed('@vibedev-si/dsh-media-viewer@0.1.0', null))
+    await safe('inspect.notInstalled.probedRegistry', () => timed('@vibedev-si/dsh-media-viewer@0.1.0', fastest))
+    await safe('inspect.installedName', () => { const probe = catalog.plugins.find((p) => p.id === 'dsh-better-sidebar'); return timed(probe.npm + '@' + probe.version, null) })
   }
 
   // Prove the panel mounts inside the real shell.
@@ -74,11 +84,23 @@ export async function runSelfCheck(ctx, panelId, catalog, errs, version) {
     add('panel.mounted', !!el)
     if (el) {
       const box = el.getBoundingClientRect()
-      const root = getComputedStyle(document.documentElement)
+      const cs = getComputedStyle(el)
+      const vars = ['--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-brand-primary', '--dsw-alias-label-primary', '--dsw-alias-border-l1']
+      const read = (node) => vars.map((v) => [v, getComputedStyle(node).getPropertyValue(v).trim() || null])
       add('panel.size', [Math.round(box.width), Math.round(box.height)])
       add('panel.cards', el.querySelectorAll('.card').length)
       add('panel.text', el.innerText.slice(0, 120))
-      add('theme.vars', ['--dsw-alias-bg-base', '--dsw-alias-brand-primary', '--dsw-alias-label-primary'].map((v) => [v, root.getPropertyValue(v).trim() || null]))
+      // Read FROM THE PANEL (variables inherit), and from its ancestors, to learn where the shell defines them.
+      add('theme.onPanel', read(el))
+      add('theme.onBody', read(document.body))
+      add('theme.onHtml', read(document.documentElement))
+      add('theme.resolved', { '--bg': cs.getPropertyValue('--bg').trim(), '--brand': cs.getPropertyValue('--brand').trim(), panelBackground: cs.backgroundColor, panelColor: cs.color, bodyBackground: getComputedStyle(document.body).backgroundColor })
+      add('theme.hooks', {
+        htmlClass: document.documentElement.className, htmlData: Object.assign({}, document.documentElement.dataset),
+        bodyClass: document.body.className, bodyData: Object.assign({}, document.body.dataset),
+        prefersDark: typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)').matches : null,
+      })
+      try { add('theme.snapshot', JSON.stringify(ctx.theme.getTheme()).slice(0, 600)) } catch (e) { add('theme.snapshot', 'unavailable: ' + String(e && e.message || e)) }
       add('panel.scrollable', (() => { const s = el.querySelector('.scroll'); return s ? s.scrollHeight > s.clientHeight || s.clientHeight > 0 : null })())
     }
   } catch (e) { add('panel.error', String(e && e.message || e)) }

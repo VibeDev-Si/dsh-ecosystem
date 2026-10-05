@@ -16,7 +16,7 @@ const server = await startBench(4801)
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-first-run'], defaultViewport: { width: 1180, height: 860, deviceScaleFactor: 1.25 } })
 const MV = '@vibedev-si/dsh-media-viewer'
 
-async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false } = {}) {
+async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false, noProbe = false, fastest } = {}) {
   const page = await browser.newPage()
   const errs = []
   page.on('pageerror', (e) => errs.push(String(e)))
@@ -25,11 +25,11 @@ async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', ma
   page.on('response', (r) => { if (r.status() >= 400 && !/favicon\.ico/.test(r.url())) errs.push(`HTTP ${r.status()} ${r.url()}`) })
   await page.goto('http://127.0.0.1:4801/')
   if (dark) await page.evaluate(() => { const s = document.documentElement.style; const v = { '--dsw-alias-bg-base': '#16171b', '--dsw-alias-bg-layer-1': '#1e1f25', '--dsw-alias-bg-layer-2': '#272830', '--dsw-alias-bg-overlay': '#2a2b33', '--dsw-alias-border-l1': 'rgba(255,255,255,.09)', '--dsw-alias-border-l2': 'rgba(255,255,255,.18)', '--dsw-alias-brand-primary': '#6f87ff', '--dsw-alias-label-primary': '#ececf2', '--dsw-alias-label-secondary': '#9b9fae' }; for (const k in v) s.setProperty(k, v[k]); document.body.style.background = '#16171b' })
-  await page.evaluate(async (initial, scenarios, delay, locale, market) => {
+  await page.evaluate(async (initial, scenarios, delay, locale, market, noProbe, fastest) => {
     const { createFakePm } = await import('/fake-pm.js')
     window.__pm = createFakePm(initial, scenarios, { delay })
-    window.setup({ locale, market }); window.mountPanel()
-  }, initial, scenarios, delay, locale, market)
+    window.setup({ locale, market, noProbe, fastest }); window.mountPanel()
+  }, initial, scenarios, delay, locale, market, noProbe, fastest)
   await page.waitForSelector('[data-testid=center]')
   await sleep(150)
   return { page, errs }
@@ -282,6 +282,64 @@ try {
   {
     const { page } = await boot({ dark: true, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
     await shot(page, '21-dark'); await page.close()
+  }
+  // 15 ── regressions found by the REAL-GUI self-check (the fake host had hidden all three)
+  {
+    // The real getLocale() is { active, locales } (the bench now returns that shape). A Chinese user must get Chinese.
+    const { page } = await boot({ locale: 'zh', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    const t = await text(page)
+    ok('REAL locale shape: a zh user gets the Chinese UI (it rendered English in the real GUI)', t.includes('VibeDev 插件中心') && t.includes('一键安装套装') && !t.includes('Install the suite'))
+    await page.evaluate(() => window.__setLocale('en')); await sleep(200)
+    ok('switching language while the panel is open re-renders it', (await text(page)).includes('Install the suite') && !(await text(page)).includes('一键安装套装'))
+    await page.evaluate(() => window.__setLocale('zh')); await sleep(200)
+    ok('and switches back', (await text(page)).includes('一键安装套装'))
+    await page.close()
+  }
+  {
+    // Registry: the official page asks the host for the fastest one; so must we, once per run, for inspect AND install.
+    const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
+    const c = await calls(page)
+    ok('the fastest registry reported by the host is used for every inspect and install', c.filter((x) => x[0] === 'inspect' || x[0] === 'installBundle').every((x) => x[2].registry === 'https://registry.npmmirror.com'), JSON.stringify(c.filter((x) => x[0] === 'inspect').map((x) => x[2])))
+    ok('the probe is asked once per run, not once per plugin', (await page.evaluate(() => window.__probeCalls)) === 1)
+    await page.close()
+  }
+  {
+    const { page } = await boot({ delay: 120, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    await page.waitForFunction(() => document.body.innerText.includes('registry: https://registry.npmmirror.com'), { timeout: 10000 })
+    ok('the chosen registry is shown in the progress log', true)
+    await page.close()
+  }
+  {
+    const { page } = await boot({ noProbe: true, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
+    ok('without a registry probe the install still works, on the host default', (await calls(page)).filter((x) => x[0] === 'inspect').every((x) => x[2].registry === null))
+    await page.close()
+  }
+  {
+    const { page } = await boot({ fastest: null, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
+    ok('a probe that finds nothing falls back to the host default', (await calls(page)).filter((x) => x[0] === 'inspect').every((x) => x[2].registry === null))
+    await page.close()
+  }
+  {
+    // What the real host really answered on this machine: one registry, timed out. The text must not claim more than that.
+    const realAnswer = { status: 'refused', problem: 'network', reason: 'pnpm view timed out after 20000ms', registries: [null] }
+    const { page } = await boot({ scenarios: { 'dsh-media': { inspect: realAnswer } } })
+    await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.primary').click()); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    await page.waitForSelector('[data-testid=fail]')
+    const t = await text(page)
+    ok('network text reports ONE registry honestly and shows the host reason', t.includes('没能连上 npm 源') && t.includes('timed out after 20000ms') && !t.includes('已依次尝试'), t.match(/没能连上[^\n]*/)?.[0])
+    await shot(page, '22-network-honest'); await page.close()
+  }
+  {
+    const two = { status: 'refused', problem: 'network', reason: 'ETIMEDOUT', registries: [null, 'https://registry.npmmirror.com'] }
+    const { page } = await boot({ scenarios: { 'dsh-media': { inspect: two } } })
+    await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.primary').click()); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    await page.waitForSelector('[data-testid=fail]')
+    ok('when the host really tried two registries, the text says so', (await text(page)).includes('已依次尝试 2 个源'))
+    await page.close()
   }
 } catch (e) {
   ok('test run completed without throwing', false, String(e && e.stack || e))

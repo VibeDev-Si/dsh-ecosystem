@@ -107,6 +107,23 @@ await t('failure: pnpm release-age cooldown is recognised, with the culprit and 
   assert.equal(r.failure.kind, 'exempt'); assert.equal(r.failure.culprit, 'dsh-film@0.3.0')
   assert.equal(E.cooldownEnds(r.failure.publishedAt).toISOString(), '2026-10-06T08:47:54.172Z')
 })
+await t('network failure keeps the registries the host actually tried (so the UI cannot overclaim)', async () => {
+  const real = { status: 'refused', problem: 'network', reason: 'pnpm view timed out after 20000ms', registries: [null] }
+  const r = await E.installOne(createFakePm([], { 'dsh-media': { inspect: real } }), by('dsh-media'), { installed: false })
+  assert.equal(r.failure.kind, 'network'); assert.deepEqual(r.failure.registries, [null]); assert.match(r.failure.diagnostic, /timed out/)
+})
+await t('the chosen registry is asked first, and install then uses the registry that answered', async () => {
+  const mirror = 'https://registry.npmmirror.com'
+  const pm = createFakePm()
+  await E.installOne(pm, by('dsh-media'), { installed: false }, { registry: mirror })
+  const regs = pm.calls.filter((c) => c[0] === 'inspect' || c[0] === 'installBundle').map((c) => [c[0], c[2].registry])
+  assert.deepEqual(regs, [['inspect', mirror], ['installBundle', mirror]])
+})
+await t('with no chosen registry, the host default (null) is used for inspect', async () => {
+  const pm = createFakePm()
+  await E.installOne(pm, by('dsh-media'), { installed: false })
+  assert.equal(pm.calls.find((c) => c[0] === 'inspect')[2].registry, null)
+})
 await t('failure: enabling fails after a good install -> reported, and says it IS installed', async () => {
   const pm = createFakePm([], { 'dsh-media': { enableFails: true } })
   const r = await E.installOne(pm, by('dsh-media'), { installed: false })

@@ -71,7 +71,7 @@ export function classifyFailure(result) {
     const m = /([@\w./-]+@[\w.-]+) was published at ([0-9T:.\-]+Z)/.exec(log)
     return { kind: 'exempt', culprit: m?.[1], publishedAt: m?.[2] }
   }
-  if (kind === 'network' || kind === 'timeout') return { kind: 'network' }
+  if (kind === 'network' || kind === 'timeout') return { kind: 'network', registries: result?.registries, diagnostic: err?.diagnostic ?? '' }
   if (kind === 'not-found' || kind === 'no-matching-version') return { kind: 'notfound' }
   if (err?.code === 'stop-profile' || err?.code === 'bundle-in-use') return { kind: 'busy', code: err.code }
   return { kind: 'failed', code: err?.code, diagnostic: err?.diagnostic ?? result?.packageResult?.output ?? '' }
@@ -124,7 +124,7 @@ export async function installOne(pm, entry, state, opts = {}) {
   const installedAlready = v.status === 'refused' && v.problem === 'already-installed'
   if (v.status === 'refused' && !(update && installedAlready)) {
     if (installedAlready) return { status: 'skipped' }
-    return { status: 'failed', failure: { kind: v.problem === 'network' ? 'network' : v.problem === 'not-found' ? 'notfound' : 'refused', problem: v.problem, diagnostic: v.reason } }
+    return { status: 'failed', failure: { kind: v.problem === 'network' ? 'network' : v.problem === 'not-found' ? 'notfound' : 'refused', problem: v.problem, diagnostic: v.reason, registries: v.registries } }
   }
   if (v.status === 'accepted' && (v.name !== entry.npm || (v.version && v.version !== entry.version) || v.bundle === false)) {
     // The registry answered with something other than what the catalog promised. Do not install it.
