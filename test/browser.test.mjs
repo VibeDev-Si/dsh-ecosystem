@@ -15,9 +15,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const server = await startBench(4801)
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-first-run'], defaultViewport: { width: 1180, height: 860, deviceScaleFactor: 1.25 } })
 const MV = '@vibedev-si/dsh-media-viewer'
+const VD = '@vibedev-si/dsh-vibedev' // formerly dsh-media
 // Versions come from the catalog (the install allow-list), so bumping one there never needs a test edit.
 const CATALOG = JSON.parse(readFileSync(join(here, '..', 'catalog', 'catalog.json'), 'utf8'))
 const spec = (id) => { const p = CATALOG.plugins.find((x) => x.id === id); return `${p.npm}@${p.version}` }
+const ver = (id) => CATALOG.plugins.find((x) => x.id === id).version
+const pub = (id) => CATALOG.plugins.find((x) => x.id === id).publishedAt
 
 const FAST = { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 40, maxMs: 300 } }
 async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false, noProbe = false, fastest, resolved, brand, settle = FAST } = {}) {
@@ -84,9 +87,9 @@ try {
     await waitText(page, '安装完成')
     const c = await calls(page)
     const installs = c.filter((x) => x[0] === 'installBundle')
-    ok('installed exactly the 3 missing, with exact versions', installs.map((x) => x[1]).join() === ['dsh-media', 'dsh-film', MV].map(spec).join(), installs.map((x) => x[1]).join())
+    ok('installed exactly the 3 missing, with exact versions', installs.map((x) => x[1]).join() === [VD, 'dsh-film', MV].map(spec).join(), installs.map((x) => x[1]).join())
     ok('every install was requested NOT enabled', installs.every((x) => x[2].enabled === false))
-    ok('each plugin enabled only after its own install', (() => { const seq = c.map((x) => x[0] + ':' + x[1]); return ['dsh-media', 'dsh-film', MV].every((n) => seq.indexOf('setBundleEnabled:' + n) > seq.findIndex((s) => s.startsWith('installBundle:' + n))) })())
+    ok('each plugin enabled only after its own install', (() => { const seq = c.map((x) => x[0] + ':' + x[1]); return [VD, 'dsh-film', MV].every((n) => seq.indexOf('setBundleEnabled:' + n) > seq.findIndex((s) => s.startsWith('installBundle:' + n))) })())
     const t2 = await text(page)
     ok('result explains what to do next, per plugin', t2.includes('已安装并启用 3 个插件') && t2.includes('剧本') && t2.includes('生成一张') && t2.includes('媒体画廊'))
     ok('sidebar was not reinstalled', !installs.some((x) => String(x[1]).startsWith('dsh-better-sidebar')))
@@ -117,7 +120,7 @@ try {
     ok(`failure "${name}" is classified as ${expectKind}`, kind === expectKind, kind)
     ok(`failure "${name}" explains itself`, t.includes(expectText), expectText)
     const has = await page.evaluate(() => [...window.__pm.bundles.keys()])
-    ok(`failure "${name}" leaves the failed plugin out and keeps the finished one`, !has.includes('dsh-film') && has.includes('dsh-media') && !has.includes('@vibedev-si/dsh-media-viewer'), has.join())
+    ok(`failure "${name}" leaves the failed plugin out and keeps the finished one`, !has.includes('dsh-film') && has.includes(VD) && !has.includes('@vibedev-si/dsh-media-viewer'), has.join())
     ok(`failure "${name}" says whether the configuration was touched`, /没有改动|没有改动你的插件配置|不会改动|未改动|你确认之前/.test(t))
     await shot(page, shotName); return page
   }
@@ -172,14 +175,14 @@ try {
 
   // 8 ── management: disable / enable / uninstall (clean), uninstall (half-removed: the real incident)
   {
-    const { page } = await boot({ initial: [{ name: 'dsh-media', version: '0.1.3' }, { name: 'dsh-better-sidebar', version: '0.24.1' }], delay: 20 })
-    await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.idle').click())
+    const { page } = await boot({ initial: [{ name: 'dsh-film', version: ver('dsh-film') }, { name: 'dsh-better-sidebar', version: '0.24.1' }], delay: 20 })
+    await page.evaluate(() => document.querySelector('.card[data-id=dsh-film] .btn.idle').click())
     await sleep(100); await shot(page, '11-manage-menu')
     await clickText(page, '停用（保留数据）', '.menu'); await sleep(250)
-    ok('disable calls setBundleEnabled(false) and the card shows Enable', (await calls(page)).some((c) => c[0] === 'setBundleEnabled' && c[1] === 'dsh-media' && c[2] === false) && (await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .ft').innerText.includes('启用'))))
-    await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.idle').click()); await sleep(80)
+    ok('disable calls setBundleEnabled(false) and the card shows Enable', (await calls(page)).some((c) => c[0] === 'setBundleEnabled' && c[1] === 'dsh-film' && c[2] === false) && (await page.evaluate(() => document.querySelector('.card[data-id=dsh-film] .ft').innerText.includes('启用'))))
+    await page.evaluate(() => document.querySelector('.card[data-id=dsh-film] .btn.idle').click()); await sleep(80)
     await clickText(page, '卸载', '.menu'); await sleep(300)
-    ok('clean uninstall removes it and the card returns to Install', !(await page.evaluate(() => window.__pm.bundles.has('dsh-media'))) && (await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .ft').innerText.includes('安装'))))
+    ok('clean uninstall removes it and the card returns to Install', !(await page.evaluate(() => window.__pm.bundles.has('dsh-film'))) && (await page.evaluate(() => document.querySelector('.card[data-id=dsh-film] .ft').innerText.includes('安装'))))
     await page.close()
   }
   {
@@ -242,16 +245,17 @@ try {
 
   // 10 ── updates
   {
-    const { page } = await boot({ initial: [{ name: 'dsh-media', version: '0.1.2' }, { name: 'dshmarket', version: '1.0.0' }, { name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    const { page } = await boot({ initial: [{ name: 'dsh-film', version: '0.2.0' }, { name: 'dshmarket', version: '1.0.0' }, { name: 'dsh-better-sidebar', version: '0.24.1' }] })
     const badge = await page.evaluate(() => document.querySelector('[data-tab=updates] .n')?.textContent)
     ok('updates tab counts only center-managed plugins (the market updates itself)', badge === '1', String(badge))
-    ok('card offers "update to 0.1.3"', (await text(page)).includes('更新到 0.1.3'))
-    await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.warn').click())
+    ok(`card offers "update to ${ver('dsh-film')}"`, (await text(page)).includes('更新到 ' + ver('dsh-film')))
+    await page.evaluate((p) => { Date.now = () => Date.parse(p) + 3 * 24 * 3600 * 1000 }, pub('dsh-film'))
+    await page.evaluate(() => document.querySelector('.card[data-id=dsh-film] .btn.warn').click())
     await page.waitForSelector('[data-testid=confirm]')
-    ok('update confirm shows from -> to and the plain reassurance (dsh-media 0.1.3 is long past its cooldown, so no warning)', (await text(page)).includes('0.1.2 → 0.1.3') && (await text(page)).includes('更新不会改动你的工作区里的项目文件') && !(await page.evaluate(() => !!document.querySelector('[data-testid=cooldown-note]'))))
+    ok('update confirm shows from -> to and the plain reassurance (clock pinned past the first day, so no cooldown warning)', (await text(page)).includes('0.2.0 → ' + ver('dsh-film')) && (await text(page)).includes('更新不会改动你的工作区里的项目文件') && !(await page.evaluate(() => !!document.querySelector('[data-testid=cooldown-note]'))))
     await shot(page, '15-update-confirm')
     await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
-    ok('update installs the exact catalog version', (await calls(page)).some((c) => c[0] === 'installBundle' && c[1] === 'dsh-media@0.1.3'))
+    ok('update installs the exact catalog version', (await calls(page)).some((c) => c[0] === 'installBundle' && c[1] === spec('dsh-film')))
     await page.close()
   }
 
@@ -351,8 +355,8 @@ try {
   {
     // What the real host really answered on this machine: one registry, timed out. The text must not claim more than that.
     const realAnswer = { status: 'refused', problem: 'network', reason: 'pnpm view timed out after 20000ms', registries: [null] }
-    const { page } = await boot({ scenarios: { 'dsh-media': { inspect: realAnswer } } })
-    await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.primary').click()); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    const { page } = await boot({ scenarios: { [VD]: { inspect: realAnswer } } })
+    await page.evaluate((id) => document.querySelector(`.card[data-id="${id}"] .btn.primary`).click(), VD); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
     await page.waitForSelector('[data-testid=fail]')
     const t = await text(page)
     ok('network text reports ONE registry honestly and shows the host reason', t.includes('没能连上 npm 源') && t.includes('timed out after 20000ms') && !t.includes('已依次尝试'), t.match(/没能连上[^\n]*/)?.[0])
@@ -360,8 +364,8 @@ try {
   }
   {
     const two = { status: 'refused', problem: 'network', reason: 'ETIMEDOUT', registries: [null, 'https://registry.npmmirror.com'] }
-    const { page } = await boot({ scenarios: { 'dsh-media': { inspect: two } } })
-    await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.primary').click()); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    const { page } = await boot({ scenarios: { [VD]: { inspect: two } } })
+    await page.evaluate((id) => document.querySelector(`.card[data-id="${id}"] .btn.primary`).click(), VD); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
     await page.waitForSelector('[data-testid=fail]')
     ok('when the host really tried two registries, the text says so', (await text(page)).includes('已依次尝试 2 个源'))
     await page.close()
@@ -476,7 +480,7 @@ try {
   }
   {
     // Final settle: the result must not appear while the host is still sending changes.
-    const { page } = await boot({ settle: { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 500, maxMs: 4000 } }, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }, { name: 'dsh-media', version: '0.1.3' }, { name: 'dsh-film', version: '0.3.0' }] })
+    const { page } = await boot({ settle: { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 500, maxMs: 4000 } }, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }, { name: VD, version: ver(VD) }, { name: 'dsh-film', version: ver('dsh-film') }] })
     await page.evaluate(() => { document.querySelector('.card[data-id="@vibedev-si/dsh-media-viewer"] .btn.primary').click() })
     await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
     await page.waitForFunction(() => /等 VibeDev 加载完/.test(document.body.innerText), { timeout: 8000 })
@@ -491,7 +495,7 @@ try {
     await page.close()
   }
   {
-    const { page } = await boot({ settle: { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 300, maxMs: 900 } }, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }, { name: 'dsh-media', version: '0.1.3' }, { name: 'dsh-film', version: '0.3.0' }] })
+    const { page } = await boot({ settle: { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 300, maxMs: 900 } }, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }, { name: VD, version: ver(VD) }, { name: 'dsh-film', version: ver('dsh-film') }] })
     await page.evaluate(() => { document.querySelector('.card[data-id="@vibedev-si/dsh-media-viewer"] .btn.primary').click() })
     await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
     await page.waitForFunction(() => /等 VibeDev 加载完/.test(document.body.innerText), { timeout: 8000 })
@@ -505,8 +509,8 @@ try {
     const { page } = await boot({ settle: { between: { quietMs: 400, maxMs: 3000 }, final: { quietMs: 20, maxMs: 200 } }, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
     await page.evaluate(() => { const pm = window.__pm; window.__t = []; for (const k of ['inspect', 'installBundle', 'setBundleEnabled']) { const o = pm[k].bind(pm); pm[k] = (...a) => { window.__t.push([k, String(a[0]), Date.now()]); return o(...a) } } })
     await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
-    await page.waitForFunction(() => window.__t.some((x) => x[0] === 'setBundleEnabled' && x[1] === 'dsh-media'), { timeout: 8000 })
-    const tEnabled = await page.evaluate(() => window.__t.find((x) => x[0] === 'setBundleEnabled' && x[1] === 'dsh-media')[2])
+    await page.waitForFunction(() => window.__t.some((x) => x[0] === 'setBundleEnabled' && x[1] === '@vibedev-si/dsh-vibedev'), { timeout: 8000 })
+    const tEnabled = await page.evaluate(() => window.__t.find((x) => x[0] === 'setBundleEnabled' && x[1] === '@vibedev-si/dsh-vibedev')[2])
     let tBusyEnd = 0
     for (let i = 0; i < 6; i++) { await page.evaluate(() => window.__fireChanged()); tBusyEnd = Date.now(); await sleep(100) }   // host busy for about 0.5 s
     await waitText(page, '安装完成', 10000)
@@ -662,14 +666,14 @@ try {
   const setBundles = (page, list, fire = true) => page.evaluate((l, f) => { const m = window.__pm.bundles; m.clear(); for (const b of l) m.set(b.name, b); if (f) window.__fireChanged() }, list, fire)
   {
     // YOUR run: the four plugins were there when VibeDev started, were all uninstalled, then installed again.
-    const four = [bundle('dsh-media', '0.1.3'), bundle('dsh-film', '0.3.0'), bundle('@vibedev-si/dsh-media-viewer', '0.1.0'), bundle('@vibedev-si/dsh-ecosystem', '0.1.1')]
+    const four = [bundle(VD, '0.2.0'), bundle('dsh-film', '0.3.0'), bundle('@vibedev-si/dsh-media-viewer', '0.1.0'), bundle('@vibedev-si/dsh-ecosystem', '0.1.1')]
     const { page } = await boot({ initial: four })
     ok('at the start there is no notice (the first look is only a baseline)', (await noRefresh(page)) === null)
     await setBundles(page, []); await sleep(150)
     ok('removing them all raises no alarm yet (a removed plugin is not loaded again)', (await noRefresh(page)) === null)
     await setBundles(page, four); await sleep(200)
     const n = await noRefresh(page)
-    ok('putting them back raises the notice, naming every plugin', !!n && n.includes('VibeDev 媒体生成') && n.includes('VibeDev 影视工作台') && n.includes('媒体预览与画廊'), n && n.replace(/\n/g, ' | ').slice(0, 160))
+    ok('putting them back raises the notice, naming every plugin', !!n && n.includes('VibeDev 账号与模型') && n.includes('VibeDev 影视工作台') && n.includes('媒体预览与画廊'), n && n.replace(/\n/g, ' | ').slice(0, 160))
     ok('it says not to reload, why, and to restart', !!n && n.includes('请不要刷新页面') && n.includes('启动那一刻的插件清单') && n.includes('完全退出并重新打开 VibeDev'))
     ok('there is nothing on the page that reloads it', !(await page.evaluate(() => [...document.querySelectorAll('button')].some((b) => /刷新|Reload/.test(b.textContent)))))
     await shot(page, '30-no-refresh-notice'); await page.close()
@@ -683,10 +687,10 @@ try {
   }
   {
     // An update replaces files of a plugin that was loaded at start.
-    const { page } = await boot({ initial: [bundle('dsh-media', '0.1.2'), bundle('dsh-better-sidebar', '0.24.1')] })
-    await page.evaluate(() => document.querySelector('.card[data-id=dsh-media] .btn.warn').click()); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装')
+    const { page } = await boot({ initial: [bundle('dsh-film', '0.2.0'), bundle('dsh-better-sidebar', '0.24.1')] })
+    await page.evaluate(() => document.querySelector('.card[data-id=dsh-film] .btn.warn').click()); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]'); await waitText(page, '安装')
     await page.waitForFunction(() => !!document.querySelector('[data-testid=no-refresh]'), { timeout: 8000 })
-    ok('an update through the center raises the notice', (await noRefresh(page)).includes('VibeDev 媒体生成'))
+    ok('an update through the center raises the notice', (await noRefresh(page)).includes('VibeDev 影视工作台'))
     await page.close()
   }
   {
@@ -698,9 +702,9 @@ try {
   }
   {
     // Disabling and enabling touch no files.
-    const { page } = await boot({ initial: [bundle('dsh-media', '0.1.3'), bundle('dsh-better-sidebar', '0.24.1')] })
-    await setBundles(page, [{ ...bundle('dsh-media', '0.1.3'), enabled: false }, bundle('dsh-better-sidebar', '0.24.1')]); await sleep(120)
-    await setBundles(page, [bundle('dsh-media', '0.1.3'), bundle('dsh-better-sidebar', '0.24.1')]); await sleep(150)
+    const { page } = await boot({ initial: [bundle('dsh-film', '0.3.0'), bundle('dsh-better-sidebar', '0.24.1')] })
+    await setBundles(page, [{ ...bundle('dsh-film', '0.3.0'), enabled: false }, bundle('dsh-better-sidebar', '0.24.1')]); await sleep(120)
+    await setBundles(page, [bundle('dsh-film', '0.3.0'), bundle('dsh-better-sidebar', '0.24.1')]); await sleep(150)
     ok('disabling and enabling a plugin does NOT show the notice', (await noRefresh(page)) === null)
     await page.close()
   }
@@ -713,8 +717,8 @@ try {
     await page.close()
   }
   {
-    const { page } = await boot({ locale: 'en', initial: [bundle('dsh-media', '0.1.2')] })
-    await setBundles(page, [bundle('dsh-media', '0.1.3')]); await sleep(200)
+    const { page } = await boot({ locale: 'en', initial: [bundle('dsh-film', '0.2.0')] })
+    await setBundles(page, [bundle('dsh-film', '0.3.0')]); await sleep(200)
     const n = await noRefresh(page)
     ok('English notice is fully English', !!n && !/[\u4e00-\u9fff]/.test(n) && n.includes('Do not reload the page') && n.includes('quit VibeDev completely'), n && n.slice(0, 90))
     await page.close()

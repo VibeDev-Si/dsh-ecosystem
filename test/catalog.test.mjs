@@ -24,6 +24,7 @@ const cases = [
   ['dist-tag instead of exact version', (c) => { c.plugins[0].version = 'latest' }],
   ['community entry pretending to be official', (c) => { c.plugins[3].role = 'official' }],
   ['official claim on an unscoped, non-grandfathered name', (c) => { c.plugins[3].origin = 'official'; c.plugins[3].role = 'official' }],
+  ['official claim on the retired unscoped name dsh-media', (c) => { c.plugins[0].npm = 'dsh-media'; c.plugins[0].id = 'dsh-media'; c.plugins[0].cmd = 'dsh plugin add dsh-media'; c.suites[0].items = c.suites[0].items.filter((i) => !i.endsWith('dsh-vibedev')); c.plugins[1].requires = [] }],
   ['community entry without the disclaimer', (c) => { c.plugins[3].capabilities = c.plugins[3].capabilities.filter((x) => x.key !== 'community') }],
   ['missing English text', (c) => { c.plugins[1].tagline.en = '' }],
   ['zh/en feature lists out of step', (c) => { c.plugins[1].does.en.pop() }],

@@ -8,13 +8,14 @@ import { createFakePm } from './fake-pm.js'
 const catalog = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'catalog', 'catalog.json'), 'utf8'))
 const by = (id) => catalog.plugins.find((p) => p.id === id)
 const MV = '@vibedev-si/dsh-media-viewer'
+const VD = '@vibedev-si/dsh-vibedev'
 let n = 0
 const t = async (name, fn) => { await fn(); n++; console.log('ok  ' + name) }
 
 // ── plan ────────────────────────────────────────────────────────────────────
 await t('plan: dependencies come first, no duplicates', () => {
-  const plan = E.resolvePlan(catalog, [MV, 'dsh-media', MV])
-  assert.deepEqual(plan.map((p) => p.id), ['dsh-better-sidebar', MV, 'dsh-media'])
+  const plan = E.resolvePlan(catalog, [MV, VD, MV])
+  assert.deepEqual(plan.map((p) => p.id), ['dsh-better-sidebar', MV, VD])
 })
 await t('plan: the creator suite expands to all four in dependency order', () => {
   const s = catalog.suites[0]
@@ -31,61 +32,61 @@ await t('spec is always name@exactVersion from the catalog', () => {
 // ── happy path & ordering ───────────────────────────────────────────────────
 await t('install: inspect -> install(enabled:false) -> enable, in that order', async () => {
   const pm = createFakePm()
-  const r = await E.installOne(pm, by('dsh-media'), { installed: false })
+  const r = await E.installOne(pm, by(VD), { installed: false })
   assert.equal(r.status, 'done')
   assert.deepEqual(pm.calls.map((c) => c[0]), ['inspect', 'installBundle', 'setBundleEnabled'])
   assert.equal(pm.calls[1][2].enabled, false, 'must install WITHOUT enabling')
-  assert.equal(pm.calls[1][1], 'dsh-media@0.1.3')
-  assert.equal(pm.bundles.get('dsh-media').enabled, true)
+  assert.equal(pm.calls[1][1], E.specOf(by(VD)))
+  assert.equal(pm.bundles.get(VD).enabled, true)
 })
 await t('install: already installed + enabled is skipped without any call to install', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.3' }])
-  const r = await E.installOne(pm, by('dsh-media'), { installed: true, enabled: true })
+  const pm = createFakePm([{ name: VD, version: '0.1.3' }])
+  const r = await E.installOne(pm, by(VD), { installed: true, enabled: true })
   assert.equal(r.status, 'skipped'); assert.equal(pm.calls.length, 0)
 })
 await t('install: installed but disabled is just enabled, not reinstalled', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.3', enabled: false }])
-  const r = await E.installOne(pm, by('dsh-media'), { installed: true, enabled: false })
+  const pm = createFakePm([{ name: VD, version: '0.1.3', enabled: false }])
+  const r = await E.installOne(pm, by(VD), { installed: true, enabled: false })
   assert.equal(r.status, 'enabledOnly'); assert.deepEqual(pm.calls.map((c) => c[0]), ['setBundleEnabled'])
 })
 await t('install: host says already-installed -> skipped, not an error', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.3' }])
-  const r = await E.installOne(pm, by('dsh-media'), { installed: false })
+  const pm = createFakePm([{ name: VD, version: '0.1.3' }])
+  const r = await E.installOne(pm, by(VD), { installed: false })
   assert.equal(r.status, 'skipped')
 })
 
 // ── safety: the registry must answer with what the catalog promised ─────────
 await t('SAFETY: registry returns a different package name -> nothing is installed', async () => {
-  const pm = createFakePm([], { 'dsh-media': { nameOverride: 'evil-media' } })
-  const r = await E.installOne(pm, by('dsh-media'), { installed: false })
+  const pm = createFakePm([], { [VD]: { nameOverride: 'evil-media' } })
+  const r = await E.installOne(pm, by(VD), { installed: false })
   assert.equal(r.status, 'failed'); assert.equal(r.failure.kind, 'mismatch')
   assert.ok(!pm.calls.some((c) => c[0] === 'installBundle'), 'installBundle must not be called')
 })
 await t('SAFETY: registry returns a different version -> nothing is installed', async () => {
-  const pm = createFakePm([], { 'dsh-media': { versionOverride: '9.9.9' } })
-  const r = await E.installOne(pm, by('dsh-media'), { installed: false })
+  const pm = createFakePm([], { [VD]: { versionOverride: '9.9.9' } })
+  const r = await E.installOne(pm, by(VD), { installed: false })
   assert.equal(r.failure.kind, 'mismatch'); assert.ok(!pm.calls.some((c) => c[0] === 'installBundle'))
 })
 await t('SAFETY: a package that is not a bundle is refused before install', async () => {
-  const pm = createFakePm([], { 'dsh-media': { notBundle: true } })
-  const r = await E.installOne(pm, by('dsh-media'), { installed: false })
+  const pm = createFakePm([], { [VD]: { notBundle: true } })
+  const r = await E.installOne(pm, by(VD), { installed: false })
   assert.equal(r.failure.kind, 'mismatch'); assert.ok(!pm.calls.some((c) => c[0] === 'installBundle'))
 })
 
 // ── failures ────────────────────────────────────────────────────────────────
 await t('failure: network', async () => {
-  const pm = createFakePm([], { 'dsh-media': { network: true } })
-  const r = await E.installOne(pm, by('dsh-media'), { installed: false })
+  const pm = createFakePm([], { [VD]: { network: true } })
+  const r = await E.installOne(pm, by(VD), { installed: false })
   assert.equal(r.status, 'failed'); assert.equal(r.failure.kind, 'network')
-  assert.equal(pm.bundles.has('dsh-media'), false, 'nothing may be left behind')
+  assert.equal(pm.bundles.has(VD), false, 'nothing may be left behind')
 })
 await t('failure: inspect RPC dropped -> reported as network, nothing installed', async () => {
-  const pm = createFakePm([], { 'dsh-media': { inspectThrows: true } })
-  const r = await E.installOne(pm, by('dsh-media'), { installed: false })
+  const pm = createFakePm([], { [VD]: { inspectThrows: true } })
+  const r = await E.installOne(pm, by(VD), { installed: false })
   assert.equal(r.failure.kind, 'network'); assert.equal(pm.bundles.size, 0)
 })
 await t('failure: not found on registry', async () => {
-  const r = await E.installOne(createFakePm([], { 'dsh-media': { notFound: true } }), by('dsh-media'), { installed: false })
+  const r = await E.installOne(createFakePm([], { [VD]: { notFound: true } }), by(VD), { installed: false })
   assert.equal(r.failure.kind, 'notfound')
 })
 await t('failure: incompatible host version carries the details', async () => {
@@ -103,25 +104,25 @@ await t('failure: pending build scripts are surfaced, and approval is passed thr
   assert.deepEqual(call[2].approvedBuilds, ['esbuild', 'protobufjs'])
 })
 await t('failure: pnpm release-age cooldown is recognised, with the culprit and the end time', async () => {
-  const r = await E.installOne(createFakePm([], { 'dsh-media': { cooldown: true } }), by('dsh-media'), { installed: false })
+  const r = await E.installOne(createFakePm([], { [VD]: { cooldown: true } }), by(VD), { installed: false })
   assert.equal(r.failure.kind, 'exempt'); assert.equal(r.failure.culprit, 'dsh-film@0.3.0')
   assert.equal(E.cooldownEnds(r.failure.publishedAt).toISOString(), '2026-10-06T08:47:54.172Z')
 })
 await t('network failure keeps the registries the host actually tried (so the UI cannot overclaim)', async () => {
   const real = { status: 'refused', problem: 'network', reason: 'pnpm view timed out after 20000ms', registries: [null] }
-  const r = await E.installOne(createFakePm([], { 'dsh-media': { inspect: real } }), by('dsh-media'), { installed: false })
+  const r = await E.installOne(createFakePm([], { [VD]: { inspect: real } }), by(VD), { installed: false })
   assert.equal(r.failure.kind, 'network'); assert.deepEqual(r.failure.registries, [null]); assert.match(r.failure.diagnostic, /timed out/)
 })
 await t('the chosen registry is asked first, and install then uses the registry that answered', async () => {
   const mirror = 'https://registry.npmmirror.com'
   const pm = createFakePm()
-  await E.installOne(pm, by('dsh-media'), { installed: false }, { registry: mirror })
+  await E.installOne(pm, by(VD), { installed: false }, { registry: mirror })
   const regs = pm.calls.filter((c) => c[0] === 'inspect' || c[0] === 'installBundle').map((c) => [c[0], c[2].registry])
   assert.deepEqual(regs, [['inspect', mirror], ['installBundle', mirror]])
 })
 await t('with no chosen registry, the host default (null) is used for inspect', async () => {
   const pm = createFakePm()
-  await E.installOne(pm, by('dsh-media'), { installed: false })
+  await E.installOne(pm, by(VD), { installed: false })
   assert.equal(pm.calls.find((c) => c[0] === 'inspect')[2].registry, null)
 })
 // ── registry choice: the official page's rule ───────────────────────────────────────────────────
@@ -263,25 +264,25 @@ await t('hostile or broken input never throws', () => {
 })
 
 await t('failure: enabling fails after a good install -> reported, and says it IS installed', async () => {
-  const pm = createFakePm([], { 'dsh-media': { enableFails: true } })
-  const r = await E.installOne(pm, by('dsh-media'), { installed: false })
+  const pm = createFakePm([], { [VD]: { enableFails: true } })
+  const r = await E.installOne(pm, by(VD), { installed: false })
   assert.equal(r.status, 'failed'); assert.equal(r.installedNotEnabled, true)
 })
 await t('restart-required is reported as its own outcome, never as plain success', async () => {
-  const r = await E.installOne(createFakePm([], { 'dsh-media': { restartOnInstall: true } }), by('dsh-media'), { installed: false })
+  const r = await E.installOne(createFakePm([], { [VD]: { restartOnInstall: true } }), by(VD), { installed: false })
   assert.equal(r.status, 'restart')
 })
 await t('install RPC lost mid-way is flagged uncertain (so the UI can re-check instead of guessing)', async () => {
-  const r = await E.installOne(createFakePm([], { 'dsh-media': { installRpcLost: true } }), by('dsh-media'), { installed: false })
+  const r = await E.installOne(createFakePm([], { [VD]: { installRpcLost: true } }), by(VD), { installed: false })
   assert.equal(r.status, 'failed'); assert.equal(r.uncertain, true)
 })
 
 // ── plans ───────────────────────────────────────────────────────────────────
 await t('plan run: stops at the first failure, keeps what is done, touches nothing after it', async () => {
-  const pm = createFakePm([], { 'dsh-media': { network: true } })
-  const rows = E.markInstalled(E.resolvePlan(catalog, ['dsh-media', 'dsh-film']), [])
+  const pm = createFakePm([], { [VD]: { network: true } })
+  const rows = E.markInstalled(E.resolvePlan(catalog, [VD, 'dsh-film']), [])
   const { results, stoppedAt } = await E.installPlan(pm, rows)
-  assert.equal(stoppedAt, 'dsh-media'); assert.equal(results.length, 1)
+  assert.equal(stoppedAt, VD); assert.equal(results.length, 1)
   assert.ok(!pm.calls.some((c) => String(c[1]).startsWith('dsh-film')), 'dsh-film must not be touched')
 })
 await t('plan run: creator suite with the sidebar already installed installs the other three', async () => {
@@ -294,14 +295,14 @@ await t('plan run: creator suite with the sidebar already installed installs the
 })
 await t('plan run: cancel via AbortSignal stops before the next plugin', async () => {
   const pm = createFakePm(); const ac = new AbortController()
-  const rows = E.markInstalled(E.resolvePlan(catalog, ['dsh-media', 'dsh-film']), [])
+  const rows = E.markInstalled(E.resolvePlan(catalog, [VD, 'dsh-film']), [])
   const { results } = await E.installPlan(pm, rows, { signal: ac.signal, hooks: { onPluginEnd: () => ac.abort() } })
   assert.equal(results[0].status, 'done'); assert.equal(results[1].status, 'cancelled')
   assert.equal(pm.bundles.has('dsh-film'), false)
 })
 await t('hooks report every step in order', async () => {
   const steps = []
-  await E.installOne(createFakePm(), by('dsh-media'), { installed: false }, { hooks: { onStep: (s) => steps.push(s) } })
+  await E.installOne(createFakePm(), by(VD), { installed: false }, { hooks: { onStep: (s) => steps.push(s) } })
   assert.deepEqual(steps, ['inspect', 'install', 'enable'])
 })
 
@@ -393,6 +394,24 @@ await t('switch: new one installed but off, old one on -> the old one goes off b
   assert.equal(r.status, 'enabledOnly')
   assert.deepEqual(pm.calls.map((c) => [c[0], c[1], c[2]].join(':')), ['setBundleEnabled:dsh-media-viewer:false', `setBundleEnabled:${MV}:true`, 'removeBundle:dsh-media-viewer:'])
 })
+await t('switch: the creator suite over an installed dsh-media replaces it (dsh-vibedev was dsh-media), never both on', async () => {
+  const pm = createFakePm([{ name: 'dsh-better-sidebar', version: '0.24.1' }, { name: 'dsh-media', version: '0.1.3' }])
+  const rows = E.markInstalled(E.resolvePlan(catalog, catalog.suites[0].items), (await pm.listBundles()).value)
+  assert.equal(rows.find((r) => r.entry.id === VD).legacy, 'dsh-media')
+  const { results } = await E.installPlan(pm, rows)
+  assert.deepEqual(results.map((r) => r.status), ['skipped', 'done', 'done', 'done'])
+  const seq = pm.calls.map((c) => `${c[0]}:${c[1]}${c[0] === 'setBundleEnabled' ? ':' + c[2] : ''}`)
+  assert.ok(seq.indexOf('setBundleEnabled:dsh-media:false') < seq.indexOf(`setBundleEnabled:${VD}:true`), seq.join(' | '))
+  assert.equal(pm.bundles.has('dsh-media'), false); assert.equal(pm.bundles.get(VD).enabled, true)
+})
+await t('switch: installing dsh-film alone brings its prerequisite, which replaces dsh-media', async () => {
+  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.3' }])
+  const rows = E.markInstalled(E.resolvePlan(catalog, ['dsh-film']), (await pm.listBundles()).value)
+  assert.deepEqual(rows.map((r) => [r.entry.id, r.legacy]), [[VD, 'dsh-media'], ['dsh-film', undefined]])
+  const { results } = await E.installPlan(pm, rows)
+  assert.deepEqual(results.map((r) => r.status), ['done', 'done'])
+  assert.equal(pm.bundles.has('dsh-media'), false)
+})
 await t('switch: an update never touches an old name (update rows do not carry one)', async () => {
   const pm = createFakePm([...oldMV(), { name: MV, version: '0.1.0' }])
   const r = await E.installOne(pm, by(MV), { installed: true, enabled: true, legacy: 'dsh-media-viewer', legacyEnabled: true }, { update: true })
@@ -402,8 +421,8 @@ await t('switch: an update never touches an old name (update rows do not carry o
 
 // ── uninstall: the non-atomic case that really happened ─────────────────────
 await t('uninstall: clean success', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.3' }])
-  assert.equal((await E.uninstall(pm, by('dsh-media'))).status, 'done')
+  const pm = createFakePm([{ name: VD, version: '0.1.3' }])
+  assert.equal((await E.uninstall(pm, by(VD))).status, 'done')
 })
 await t('uninstall: pnpm blocks the last step -> reported as HALF-removed (disabled but still installed), with the cooldown cause', async () => {
   const pm = createFakePm([{ name: 'dsh-film', version: '0.3.0' }], { 'dsh-film': { removeFailsLast: true } })
@@ -415,11 +434,11 @@ await t('uninstall: pnpm blocks the last step -> reported as HALF-removed (disab
 // ── updates ─────────────────────────────────────────────────────────────────
 await t('updates: only center-managed plugins whose installed version is older', () => {
   const u = E.pendingUpdates(catalog, [
-    { name: 'dsh-media', version: '0.1.2', installed: true },
+    { name: VD, version: '0.1.0', installed: true },
     { name: 'dshmarket', version: '1.0.0', installed: true }, // updates itself -> never offered
-    { name: 'dsh-film', version: '0.3.0', installed: true }, // current
+    { name: 'dsh-film', version: by('dsh-film').version, installed: true }, // current
   ])
-  assert.deepEqual(u.map((x) => [x.entry.id, x.from, x.to]), [['dsh-media', '0.1.2', '0.1.3']])
+  assert.deepEqual(u.map((x) => [x.entry.id, x.from, x.to]), [[VD, '0.1.0', by(VD).version]])
 })
 await t('semver compare', () => {
   assert.equal(E.compareSemver('0.1.2', '0.1.3'), -1); assert.equal(E.compareSemver('1.0.0', '0.9.9'), 1); assert.equal(E.compareSemver('0.3.0', '0.3.0'), 0)
@@ -427,37 +446,37 @@ await t('semver compare', () => {
 
 // ── update mode: the host's inspect refuses by NAME, so "already-installed" must NOT skip an update ──
 await t('UPDATE: inspect says already-installed, yet the update still installs the new exact version', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.2' }])
-  const r = await E.installOne(pm, by('dsh-media'), { installed: true, enabled: true }, { update: true })
+  const pm = createFakePm([{ name: VD, version: '0.1.0' }])
+  const r = await E.installOne(pm, by(VD), { installed: true, enabled: true }, { update: true })
   assert.notEqual(r.status, 'skipped', 'an update must never be silently skipped')
   const inst = pm.calls.filter((c) => c[0] === 'installBundle')
-  assert.equal(inst.length, 1); assert.equal(inst[0][1], 'dsh-media@0.1.3')
-  assert.equal(pm.bundles.get('dsh-media').version, '0.1.3')
+  assert.equal(inst.length, 1); assert.equal(inst[0][1], E.specOf(by(VD)))
+  assert.equal(pm.bundles.get(VD).version, by(VD).version)
 })
 await t('UPDATE: stays enabled if it was enabled, and is reported as needing a restart', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.2' }])
-  const r = await E.installOne(pm, by('dsh-media'), { installed: true, enabled: true }, { update: true })
-  assert.equal(r.status, 'restart'); assert.equal(pm.bundles.get('dsh-media').enabled, true)
+  const pm = createFakePm([{ name: VD, version: '0.1.0' }])
+  const r = await E.installOne(pm, by(VD), { installed: true, enabled: true }, { update: true })
+  assert.equal(r.status, 'restart'); assert.equal(pm.bundles.get(VD).enabled, true)
 })
 await t('UPDATE: a plugin the user had switched off stays off', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.2', enabled: false }])
-  await E.installOne(pm, by('dsh-media'), { installed: true, enabled: false }, { update: true })
-  assert.equal(pm.bundles.get('dsh-media').version, '0.1.3'); assert.equal(pm.bundles.get('dsh-media').enabled, false)
+  const pm = createFakePm([{ name: VD, version: '0.1.0', enabled: false }])
+  await E.installOne(pm, by(VD), { installed: true, enabled: false }, { update: true })
+  assert.equal(pm.bundles.get(VD).version, by(VD).version); assert.equal(pm.bundles.get(VD).enabled, false)
   assert.ok(!pm.calls.some((c) => c[0] === 'setBundleEnabled' && c[2] === true), 'must not switch it back on')
 })
 await t('UPDATE: a real refusal (not-found) is still a failure, only already-installed is waved through', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.2' }], { 'dsh-media': { inspect: { status: 'refused', problem: 'not-found', reason: 'nope' } } })
-  const r = await E.installOne(pm, by('dsh-media'), { installed: true, enabled: true }, { update: true })
+  const pm = createFakePm([{ name: VD, version: '0.1.0' }], { [VD]: { inspect: { status: 'refused', problem: 'not-found', reason: 'nope' } } })
+  const r = await E.installOne(pm, by(VD), { installed: true, enabled: true }, { update: true })
   assert.equal(r.status, 'failed'); assert.equal(r.failure.kind, 'notfound')
 })
 await t('UPDATE: pnpm cooldown on update is recognised too', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.2' }], { 'dsh-media': { cooldown: true } })
-  const r = await E.installOne(pm, by('dsh-media'), { installed: true, enabled: true }, { update: true })
+  const pm = createFakePm([{ name: VD, version: '0.1.0' }], { [VD]: { cooldown: true } })
+  const r = await E.installOne(pm, by(VD), { installed: true, enabled: true }, { update: true })
   assert.equal(r.failure.kind, 'exempt')
 })
 await t('FRESH install is unchanged: already-installed is still skipped when not updating', async () => {
-  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.3' }])
-  const r = await E.installOne(pm, by('dsh-media'), { installed: false })
+  const pm = createFakePm([{ name: VD, version: by(VD).version }])
+  const r = await E.installOne(pm, by(VD), { installed: false })
   assert.equal(r.status, 'skipped')
 })
 

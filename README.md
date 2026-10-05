@@ -9,8 +9,8 @@
 
 - **官方插件，说明写清楚**：每个插件的功能、费用、会读写什么、依赖什么，都写在卡片和详情里；需要 VibeDev 账号、按用量计费的会明确标出。
 - **一键安装**：点一次、确认一次，自动完成「检查 → 安装 → 启用」，缺少的前置插件一并装好。
-- **套装**：「AI 创作套装」= Better Sidebar + 媒体生成 + 影视工作台 + 媒体预览，一次装齐，已装的自动跳过。
-- **旧包名迁移**：发现旧包名（例如 `dsh-media-viewer`）时，按"新包装但不启用 → 停用旧包 → 启用新包 → 确认后卸载旧包"的顺序切换，避免两者同时启用互相冲突；失败时自动把旧包恢复，不会让你两个都没有。
+- **套装**：「AI 创作套装」= Better Sidebar + VibeDev 账号与模型 + 影视工作台 + 媒体预览，一次装齐，已装的自动跳过。
+- **旧包名迁移**：发现旧包名（例如 `dsh-media-viewer`、改名为 `@vibedev-si/dsh-vibedev` 的 `dsh-media`）时，按"新包装但不启用 → 停用旧包 → 启用新包 → 新包启用成功后卸载旧包"的顺序切换，避免两者同时启用互相冲突；失败时自动把旧包恢复，不会让你两个都没有。旧包还在时直接安装新包（单装、套装或作为前置插件）也按同样的顺序切换。
 - **管理与更新**：停用、启用、卸载、更新；有新版本时按钮变"更新到 x"。
 - **插件中心自己的新版本**：点右上角「检查更新」，会告诉你有没有新版本。插件中心不能给自己更新，所以会给出完整包名和卸载重装的步骤；如果新版本发布不足一天，还会提示 pnpm 的冷却期可能让更新被拦住，并给出可以更新的时间。
 - **社区插件**：一键安装社区的插件市场 `dshmarket`，已装时在「社区插件」标签页里嵌入它的界面。本中心**只收录官方插件**，不替代插件市场。
@@ -78,7 +78,7 @@ npm run validate:online  # 核对目录里每个包@版本真的在 npm 上
 
 ## English
 
-**@vibedev-si/dsh-ecosystem** is the VibeDev Plugin Center: a panel in the sidebar that explains the official VibeDev plugins (what they do, what they cost, what they read and write, what they need), installs them in one click (inspect → install disabled → enable, with prerequisites), offers a one-click "AI Creator Suite", migrates old package names safely, and installs the community plugin market on request. It lists **only official plugins** and does not replace the market.
+**@vibedev-si/dsh-ecosystem** is the VibeDev Plugin Center: a panel in the sidebar that explains the official VibeDev plugins (what they do, what they cost, what they read and write, what they need), installs them in one click (inspect → install disabled → enable, with prerequisites), offers a one-click "AI Creator Suite", migrates old package names safely (also when the new name is installed directly while the old one is still there), and installs the community plugin market on request. It lists **only official plugins** and does not replace the market.
 
 Because it can install other plugins, it is deliberately strict: it installs only catalog entries at their exact version; it blocks the install if the registry's answer does not match the catalog; it stops and asks before any dependency build script runs; and it sends no telemetry. It does not use the network on its own: the single exception is "Check for updates", which you click, and which makes the host read this one package's version information from the npm registry and the China mirror (read-only, fixed addresses, nothing from the page can change them, no cookies and no information about you or your machine; a success is cached for a minute). The upstream capability scanner does not recognise the global `fetch`, so it will not list this as a network capability; we state it here instead.
 

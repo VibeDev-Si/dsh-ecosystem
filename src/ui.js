@@ -516,7 +516,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         head = h('div', { className: 'res ok' }, I.ok(), h('div', null, h('b', null, S.doneHead(done.length)), h('span', null, S.doneLoaded)))
         const ids = done.map((r) => r.entry.id)
         extra = [leftOld, h('div', { className: 'next', key: 'next' }, h('b', null, S.nextH), h('ul', null,
-          ids.includes('dsh-film') && h('li', { key: 1 }, S.nextFilm), ids.includes('dsh-media') && h('li', { key: 2 }, S.nextMedia),
+          ids.includes('dsh-film') && h('li', { key: 1 }, S.nextFilm), ids.includes('@vibedev-si/dsh-vibedev') && h('li', { key: 2 }, S.nextVibedev),
           ids.includes('@vibedev-si/dsh-media-viewer') && h('li', { key: 3 }, S.nextViewer), ids.includes(MARKET) && h('li', { key: 4 }, S.nextMarket),
           !marketIn && !ids.includes(MARKET) && h('li', { key: 5 }, S.nextMarketHint)))]
         // No "reload the page" button, on purpose: the official Plugins page never reloads either (the host loads an

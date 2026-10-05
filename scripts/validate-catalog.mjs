@@ -54,7 +54,8 @@ for (const p of catalog.plugins ?? []) {
   if (!ORIGINS.has(p.origin)) err(`${w}: origin`)
   if (!ROLES.has(p.role)) err(`${w}: role`)
   if (!UPDATES.has(p.updates)) err(`${w}: updates`)
-  if (p.origin === 'official' && !(p.npm.startsWith('@vibedev-si/') || ['dsh-media', 'dsh-film'].includes(p.npm))) {
+  // dsh-media is no longer on the list: it was renamed @vibedev-si/dsh-vibedev and lives on only as a legacy name.
+  if (p.origin === 'official' && !(p.npm.startsWith('@vibedev-si/') || ['dsh-film'].includes(p.npm))) {
     err(`${w}: an "official" entry must be @vibedev-si/* or one of the grandfathered unscoped names`)
   }
   if (p.origin === 'community' && p.role === 'official') err(`${w}: community entry cannot have role official`)
