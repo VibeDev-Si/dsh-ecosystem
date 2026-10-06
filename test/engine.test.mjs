@@ -480,4 +480,92 @@ await t('FRESH install is unchanged: already-installed is still skipped when not
   assert.equal(r.status, 'skipped')
 })
 
+
+// Installation-provided bundles have installed:false; defaults can still run their rows.
+const suppliedAccount = (extra = {}) => ({ name: VD, version: by(VD).version, installed: false, enabled: false,
+  liveEnabled: true, removable: false, optional: false,
+  rows: [{ rowId: 'dsh-vibedev', moduleName: VD, entryId: 'include:dsh-vibedev' }], ...extra })
+const inventoryOf = async (pm) => (await E.readBundleInventory(pm)).value
+await t('provided: defaults can enable a built-in package without a profile dependency or bundle selection', async () => {
+  const pm = createFakePm([suppliedAccount()])
+  const rows = E.markInstalled(E.resolvePlan(catalog, [VD]), await inventoryOf(pm))
+  assert.equal(rows[0].installed, true); assert.equal(rows[0].enabled, true); assert.equal(rows[0].provided, true)
+  pm.calls.length = 0
+  assert.equal((await E.installOne(pm, by(VD), rows[0])).status, 'skipped')
+  assert.equal(pm.calls.length, 0, 'must not install or select a second copy')
+})
+await t('provided: the suite reuses the built-in account and installs only film and viewer', async () => {
+  const pm = createFakePm([{ name: 'dsh-better-sidebar', version: '0.24.1' }, suppliedAccount()])
+  const rows = E.markInstalled(E.resolvePlan(catalog, catalog.suites[0].items), await inventoryOf(pm))
+  const r = await E.installPlan(pm, rows)
+  assert.deepEqual(r.results.map((x) => x.status), ['skipped', 'skipped', 'done', 'done'])
+  assert.deepEqual(pm.calls.filter((x) => x[0] === 'installBundle').map((x) => x[1]), [E.specOf(by('dsh-film')), E.specOf(by(MV))])
+  assert.ok(!pm.calls.some((x) => x[0] === 'setBundleEnabled' && x[1] === VD))
+})
+await t('provided: disabled built-ins block their dependants without reinstalling or selecting them', async () => {
+  const pm = createFakePm([suppliedAccount({ liveEnabled: false })])
+  const rows = E.markInstalled(E.resolvePlan(catalog, ['dsh-film']), await inventoryOf(pm))
+  pm.calls.length = 0
+  const r = await E.installPlan(pm, rows)
+  assert.equal(r.stoppedAt, VD); assert.equal(r.results[0].failure.kind, 'provided'); assert.equal(pm.calls.length, 0)
+})
+await t('provided: a failed plugin-inventory read never creates a fallback installation', async () => {
+  const pm = createFakePm([suppliedAccount()]); pm.listPlugins = async () => { throw new Error('offline') }
+  const rows = E.markInstalled(E.resolvePlan(catalog, [VD]), await inventoryOf(pm))
+  assert.equal(rows[0].provided, true); assert.equal(rows[0].installed, true)
+  assert.equal((await E.installOne(pm, by(VD), rows[0])).failure.kind, 'provided')
+  assert.ok(!pm.calls.some((x) => x[0] === 'installBundle' || x[0] === 'setBundleEnabled'))
+})
+await t('provided: a row id now occupied by another package does not prove the built-in package is enabled', async () => {
+  const pm = createFakePm([suppliedAccount()]); pm.listPlugins = async () => ({ ok: true, value: [{ entryId: 'include:dsh-vibedev', moduleName: 'other-package', enabled: true }] })
+  const b = (await inventoryOf(pm))[0]
+  assert.equal(b.enabled, false); assert.equal(E.bundlePresent(b), true)
+})
+await t('provided: the loaded installation wins over a redundant profile dependency, including updates', async () => {
+  const pm = createFakePm([suppliedAccount({ installed: true, version: '0.2.0' })])
+  const bundles = await inventoryOf(pm)
+  assert.deepEqual(E.pendingUpdates(catalog, bundles), [])
+  const row = E.markInstalled([by(VD)], bundles)[0]
+  assert.equal((await E.installOne(pm, by(VD), row, { update: true })).failure.kind, 'provided')
+  assert.ok(!pm.calls.some((x) => x[0] === 'installBundle'))
+})
+await t('provided: an owned but protected package is not misclassified; a missing selection is not present', () => {
+  assert.equal(E.providedByApp({ installed: true, removable: false, source: VD + '@0.2.1' }), false)
+  assert.equal(E.bundlePresent({ installed: false, enabled: true, removable: true }), false)
+})
+await t('provided: uninstall checks live ownership and never calls removeBundle for a built-in package', async () => {
+  const pm = createFakePm([suppliedAccount()])
+  const r = await E.uninstall(pm, by(VD))
+  assert.equal(r.failure.kind, 'provided'); assert.equal(pm.bundles.has(VD), true)
+  assert.ok(!pm.calls.some((x) => x[0] === 'removeBundle'))
+})
+await t('provided: migration reuses the enabled built-in and only disables/removes the old external package', async () => {
+  const pm = createFakePm([suppliedAccount(), { name: 'dsh-media', version: '0.1.3' }])
+  const bundles = await inventoryOf(pm)
+  assert.equal(E.legacyInstalled(catalog, bundles)[0].provided, true)
+  const r = await E.migrate(pm, by(VD), 'dsh-media')
+  assert.equal(r.status, 'done'); assert.equal(pm.bundles.has(VD), true); assert.equal(pm.bundles.has('dsh-media'), false)
+  assert.deepEqual(pm.calls.filter((x) => !['listBundles', 'listPlugins'].includes(x[0])).map((x) => [x[0], x[1]]), [['setBundleEnabled', 'dsh-media'], ['removeBundle', 'dsh-media']])
+})
+await t('provided: inline suite migration cannot skip the old external copy or reinstall the new one', async () => {
+  const pm = createFakePm([{ name: 'dsh-better-sidebar', version: '0.24.1' }, suppliedAccount(), { name: 'dsh-media', version: '0.1.3' }])
+  const rows = E.markInstalled(E.resolvePlan(catalog, catalog.suites[0].items), await inventoryOf(pm))
+  assert.equal(E.needsInstall(rows.find((r) => r.entry.id === VD)), true)
+  await E.installPlan(pm, rows)
+  assert.equal(pm.bundles.has('dsh-media'), false)
+  assert.ok(!pm.calls.some((x) => x[0] === 'installBundle' && x[1] === E.specOf(by(VD))))
+})
+await t('provided: an unavailable built-in never disables the old package during migration', async () => {
+  const pm = createFakePm([suppliedAccount({ liveEnabled: false }), { name: 'dsh-media', version: '0.1.3' }])
+  assert.equal((await E.migrate(pm, by(VD), 'dsh-media')).failure.kind, 'provided')
+  assert.equal(pm.bundles.get('dsh-media').enabled, true)
+  assert.ok(!pm.calls.some((x) => x[0] === 'setBundleEnabled' || x[0] === 'installBundle' || x[0] === 'removeBundle'))
+})
+await t('provided: failed old-package removal leaves the built-in package alone and reports the remainder', async () => {
+  const pm = createFakePm([suppliedAccount(), { name: 'dsh-media', version: '0.1.3' }], { 'dsh-media': { removeFailsLast: true } })
+  const r = await E.migrate(pm, by(VD), 'dsh-media')
+  assert.equal(r.status, 'halfRemoved'); assert.equal(pm.bundles.get('dsh-media').enabled, false)
+  assert.equal(pm.bundles.get(VD).installed, false); assert.equal(pm.bundles.get(VD).liveEnabled, true)
+})
+
 console.log(`\n${n} engine tests passed`)

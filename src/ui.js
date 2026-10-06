@@ -166,7 +166,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const refresh = useCallback(async () => {
       if (!host.pm) { setBundles(false); return }
       try {
-        const r = await host.pm.listBundles()
+        const r = await E.readBundleInventory(host.pm)
         setBundles(r?.ok ? r.value : false)
         if (r?.ok) {
           tracker.current = E.trackLoadedChanges(tracker.current, r.value)
@@ -176,10 +176,12 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }, [])
     useEffect(() => { refresh(); return host.onChanged?.(refresh) }, [refresh])
 
-    const have = useMemo(() => new Map((bundles || []).filter((b) => b.installed).map((b) => [b.name, b])), [bundles])
+    const have = useMemo(() => new Map((bundles || []).filter(E.bundlePresent).map((b) => [b.name, b])), [bundles])
     const isIn = (p) => have.has(p.npm)
     const isOn = (p) => !!have.get(p.npm)?.enabled
-    const missingDeps = (p) => (p.requires || []).filter((d) => !isIn(byId(d)))
+    const isProvided = (p) => E.providedByApp(have.get(p.npm))
+    const shownVersion = (p) => isProvided(p) ? have.get(p.npm)?.version ?? p.version : p.version
+    const missingDeps = (p) => (p.requires || []).filter((d) => !isIn(byId(d)) || isProvided(byId(d)) && !isOn(byId(d)))
     const updates = useMemo(() => (bundles ? E.pendingUpdates(catalog, bundles) : []), [bundles])
     const legacy = useMemo(() => (bundles ? E.legacyInstalled(catalog, bundles).filter((x) => !x.newInstalled || true) : []), [bundles])
 
@@ -202,7 +204,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       setModal({ mode: 'confirm', rows, title, update: !!opts.update })
     }
     const start = async (rows, title, update, approved) => {
-      const run = { rows: rows.map((r) => ({ ...r, st: r.installed && r.enabled && !update ? 'skip' : 'wait', sub: '' })), log: [], title, update, cur: null, approved: approved || {} }
+      const run = { rows: rows.map((r) => ({ ...r, st: E.needsInstall(r, update) ? 'wait' : 'skip', sub: '' })), log: [], title, update, cur: null, approved: approved || {} }
       aborter.current = new AbortController()
       setModal({ mode: 'run', run: { ...run } })
       const upd = () => setModal({ mode: 'run', run: { ...run, rows: run.rows.map((r) => ({ ...r })) } })
@@ -283,6 +285,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const SELF_PKG = '@vibedev-si/dsh-ecosystem'
     const copyPkg = () => { host.copy?.(SELF_PKG); setCopied(true); setTimeout(() => setCopied(false), 2000) }
     const stateBtn = (p) => {
+      if (isProvided(p)) return h('span', { className: 'btn ' + (isOn(p) ? 'ok' : ''), 'data-testid': 'provided', title: S.providedNote }, S.provided, ' · ', isOn(p) ? S.enabled : S.disabled)
       if (isIn(p)) {
         const on = isOn(p)
         const up = updates.find((u) => u.entry.id === p.id)
@@ -307,7 +310,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
           S.needs((p.requires || []).map((d) => L(byId(d).name, lang)).join(', ')), m.length ? S.willInstall : S.satisfied)
         : null
       return h('div', { className: 'card', key: p.id, 'data-id': p.id, onClick: () => setDrawer(p.id) },
-        h('div', { className: 'hd' }, Glyph(p), h('div', null, h('div', { className: 'nm' }, L(p.name, lang)), h('div', { className: 'sub' }, `${p.npm} · ${p.version}`))),
+        h('div', { className: 'hd' }, Glyph(p), h('div', null, h('div', { className: 'nm' }, L(p.name, lang)), h('div', { className: 'sub' }, `${p.npm} · ${shownVersion(p)}`))),
         h('div', { className: 'tg' }, L(p.tagline, lang)),
         h('div', { className: 'tags' }, tagEls(p)),
         dep,
@@ -317,7 +320,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const Suite = () => {
       const s = catalog.suites[0]
       const items = s.items.map(byId)
-      const todo = items.filter((p) => !isIn(p) || !isOn(p))
+      const todo = items.filter((p) => !isIn(p) || !isOn(p) || isProvided(p) && legacy.some((x) => x.entry.id === p.id))
       const filmish = todo.some((p) => p.sizeKB > 10000)
       const chips = []
       items.forEach((p, i) => {
@@ -373,7 +376,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         h('button', { className: 'lnk', onClick: () => (marketIn ? setView('community') : openInstall([MARKET], `${S.install} ${L(byId(MARKET).name, lang)}`)) }, marketIn ? S.openMarket : S.installMarket)))
 
     const Banner = () => legacy.map((x) => h('div', { className: 'banner', key: x.legacy, 'data-testid': 'migrate-banner' }, I.warn(),
-      h('div', { className: 'grow' }, h('b', null, S.migrateTitle(x.legacy)), ' ', S.migrateBody(x.legacy, x.entry.npm), h('small', null, S.migrateOrder)),
+      h('div', { className: 'grow' }, h('b', null, S.migrateTitle(x.legacy)), ' ', S.migrateBody(x.legacy, x.entry.npm), h('small', null, x.provided ? S.providedMigration : S.migrateOrder)),
       h('button', { className: 'btn primary', onClick: () => doMigrate(x) }, S.migrateBtn)))
 
     const Community = () => {
@@ -412,7 +415,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       return [
         h('div', { className: 'mask', key: 'm', onClick: () => setDrawer(null) }),
         h('aside', { className: 'drawer', key: 'd', 'data-testid': 'drawer' },
-          h('div', { className: 'dh' }, h('div', { className: 'row' }, Glyph(p), h('div', null, h('h2', null, L(p.name, lang)), h('div', { className: 'sub' }, `${p.npm} · ${p.version} · ${p.origin === 'official' ? S.officialSrc : S.communitySrc(p.author)}`)),
+          h('div', { className: 'dh' }, h('div', { className: 'row' }, Glyph(p), h('div', null, h('h2', null, L(p.name, lang)), h('div', { className: 'sub' }, `${p.npm} · ${shownVersion(p)} · ${p.origin === 'official' ? S.officialSrc : S.communitySrc(p.author)}`)),
             h('button', { className: 'x', onClick: () => setDrawer(null) }, '×')), h('div', { className: 'tags', style: { marginTop: 10 } }, tagEls(p))),
           h('div', { className: 'db' },
             h('div', null, L(p.tagline, lang)),
@@ -428,9 +431,9 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
               h('dt', null, S.source), h('dd', null, p.origin === 'official' ? S.officialSrc : S.communitySrc(p.author)),
               h('dt', null, S.review), h('dd', null, p.origin === 'official' ? S.officialReview : p.reviewed ? S.reviewedBy(p.reviewed.tested.join(', '), p.reviewed.date) : S.notReviewed),
               p.compat ? [h('dt', { key: 'a' }, S.compat), h('dd', { key: 'b' }, `${S.compatS[p.compat.s]}: ${L(p.compat.why, lang)}`)] : null),
-            h('h4', null, S.manualH), h('pre', { className: 'cmd' }, p.cmd), h('div', { className: 'note' }, S.manualNote),
-            h('div', { className: 'links' }, h('button', { onClick: () => host.openUrl?.(p.links.repo) }, S.repo), h('button', { onClick: () => host.openUrl?.(p.links.npm) }, S.npm), h('button', { onClick: () => host.copy?.(p.cmd) }, S.copyCmd))),
-          h('div', { className: 'dfoot' }, h('div', { className: 'grow' }, isIn(p) ? S.enabled : m.length ? S.willInstall : ''), isIn(p) ? h('button', { className: 'btn', disabled: true }, S.enabled)
+            h('h4', null, isProvided(p) ? S.provided : S.manualH), isProvided(p) ? h('div', { className: 'note', 'data-testid': 'provided-note' }, S.providedNote) : [h('pre', { className: 'cmd', key: 'cmd' }, p.cmd), h('div', { className: 'note', key: 'note' }, S.manualNote)],
+            h('div', { className: 'links' }, h('button', { onClick: () => host.openUrl?.(p.links.repo) }, S.repo), h('button', { onClick: () => host.openUrl?.(p.links.npm) }, S.npm), !isProvided(p) && h('button', { onClick: () => host.copy?.(p.cmd) }, S.copyCmd))),
+          h('div', { className: 'dfoot' }, h('div', { className: 'grow' }, isProvided(p) ? S.provided : isIn(p) ? (isOn(p) ? S.enabled : S.disabled) : m.length ? S.willInstall : ''), isIn(p) ? h('button', { className: 'btn', disabled: true }, isProvided(p) ? S.provided : isOn(p) ? S.enabled : S.disabled)
             : h('button', { className: 'btn primary big', disabled: !host.pm, onClick: () => openInstall([p.id], `${S.install} ${L(p.name, lang)}`) }, I.down(), ' ', m.length ? S.installWithDeps : S.install))),
       ]
     }
@@ -451,17 +454,17 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
     const Row = (r) => h('div', { className: 'row3 ' + (r.st === 'skip' ? 'skip' : ''), key: r.entry.id }, Glyph(r.entry, 'gl'),
       h('div', { className: 'm' }, h('b', null, L(r.entry.name, lang)), ' ', h('span', { style: { color: 'var(--t2)', fontWeight: 400 } }, r.update ? `${r.update.from} → ${r.update.to}` : r.entry.version),
-        h('div', null, r.st === 'skip' ? S.alreadyInstalled : r.update ? S.afterUpdateRefresh : r.legacy ? `${r.entry.npm} · ${S.replacesOld(r.legacy)}` : r.entry.npm)), stIcon(r))
+        h('div', null, r.st === 'skip' ? (r.provided ? S.provided + ' · ' + S.alreadyInstalled : S.alreadyInstalled) : r.update ? S.afterUpdateRefresh : r.legacy ? `${r.entry.npm} · ${S.replacesOld(r.legacy)}` : r.entry.npm)), stIcon(r))
 
     const Confirm = () => {
       const { rows, title, update } = modal
-      const todo = rows.filter((r) => update || !(r.installed && r.enabled))
+      const todo = rows.filter((r) => E.needsInstall(r, update))
       const accts = update ? [] : todo.filter((r) => (r.entry.tags || []).includes('needsAccount'))
       const switching = update ? [] : todo.filter((r) => r.legacy)
       return [
         h('div', { className: 'mh', key: 'h' }, h('h2', null, title), h('p', null, update ? S.willUpdateN(todo.length, sizeOf(todo.map((r) => r.entry))) : S.willInstallN(todo.length, rows.length - todo.length, sizeOf(todo.map((r) => r.entry))))),
         h('div', { className: 'mb', key: 'b' },
-          rows.map((r) => Row({ ...r, st: update || !(r.installed && r.enabled) ? 'wait-confirm' : 'skip', sub: '' })).map((el, i) => React.cloneElement(el, { key: i })),
+          rows.map((r) => Row({ ...r, st: E.needsInstall(r, update) ? 'wait-confirm' : 'skip', sub: '' })).map((el, i) => React.cloneElement(el, { key: i })),
           (() => {
             if (!update) return null
             const fresh = todo.filter((r) => E.cooldownState(r.entry.publishedAt).active)
@@ -499,6 +502,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         case 'mismatch': return [S.fMismatchT, S.fMismatchB(f.diagnostic || ''), 'err']
         case 'exempt': return [S.fExemptT, S.fExemptB(f.culprit, E.cooldownEnds(f.publishedAt)?.toLocaleString()), 'err']
         case 'busy': return [S.fBusyT, S.fBusyB, 'err']
+        case 'provided': return [S.providedBlockedT, S.providedBlockedB, 'warn']
         case 'refused': return [S.fRefusedT, f.diagnostic || '', 'err']
         default: return [S.fFailedT, f.diagnostic ? f.diagnostic.slice(0, 400) : S.fFailedB, 'err']
       }
@@ -541,7 +545,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
           failed?.uncertain && h('div', { className: 'res warn', key: 3 }, I.warn(), h('div', null, h('b', null, S.uncertainT), h('span', null, S.uncertainB))),
         ]
         const retryNow = () => start(run.rows.map((r) => ({ ...r, installed: r.st === 'ok' || r.installed && r.enabled, enabled: r.st === 'ok' || r.enabled })), run.title, update)
-        acts = f.kind === 'builds'
+        acts = f.kind === 'provided' ? h('button', { className: 'btn', onClick: () => setModal(null) }, S.gotIt) : f.kind === 'builds'
           ? [h('button', { className: 'btn', key: 's', onClick: () => setModal(null) }, S.skipThis), h('button', { className: 'btn primary big', key: 'r', 'data-testid': 'approve', onClick: () => start(run.rows.map((r) => ({ ...r, installed: r.st === 'ok' || (r.installed && r.enabled), enabled: r.st === 'ok' || r.enabled })), run.title, update, { [failedRow.entry.id]: f.pendingBuilds }) }, S.approveRetry)]
           : [h('button', { className: 'btn', key: 'c', onClick: () => { host.copy?.(failedRow ? failedRow.entry.cmd : ''); } }, S.copyCmd), h('button', { className: 'btn', key: 'x', onClick: () => setModal(null) }, S.later),
             f.kind !== 'incompat' && f.kind !== 'mismatch' && h('button', { className: 'btn primary big', key: 'r', 'data-testid': 'retry', onClick: failed?.uncertain ? async () => { await refresh(); setModal(null) } : retryNow }, failed?.uncertain ? S.recheck : S.retry)]
@@ -554,12 +558,12 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
     const Migrate = () => {
       const { x, phase, step, result } = modal
-      const steps = ['inspect', 'install', 'disable-old', 'enable', 'remove-old']
-      if (phase === 'run') return [h('div', { className: 'mh', key: 'h' }, h('h2', null, S.migrating), h('p', null, S.migrateOrder)),
+      const steps = x.provided ? ['disable-old', 'remove-old'] : ['inspect', 'install', 'disable-old', 'enable', 'remove-old']
+      if (phase === 'run') return [h('div', { className: 'mh', key: 'h' }, h('h2', null, S.migrating), h('p', null, x.provided ? S.providedMigration : S.migrateOrder)),
         h('div', { className: 'mb', key: 'b' }, steps.map((s, i) => h('div', { className: 'row3', key: s }, h('div', { className: 'm' }, h('b', null, `${i + 1}. ${s}`)), steps.indexOf(step) === i ? h('span', { className: 'stat' }, h('span', { className: 'spin' })) : steps.indexOf(step) > i ? h('span', { className: 'dotc ok' }, I.check(9)) : null)))]
       const ok = result.status === 'done', half = result.status === 'halfRemoved'
       return [h('div', { className: 'mh', key: 'h' }, h('h2', null, ok || half ? S.doneTitle : S.failTitle)),
-        h('div', { className: 'mb', key: 'b' }, h('div', { className: 'res ' + (ok ? 'ok' : half ? 'warn' : 'err'), 'data-testid': 'mig-result', 'data-status': result.status }, ok ? I.ok() : half ? I.warn() : I.err(), h('div', null, h('b', null, ok ? S.migDone : half ? S.migHalf : result.restoredOld ? S.migRestored : S.fFailedT), h('span', null, !ok && !half && !result.restoredOld ? (result.failure?.diagnostic || '').slice(0, 300) : '')))),
+        h('div', { className: 'mb', key: 'b' }, h('div', { className: 'res ' + (ok ? 'ok' : half ? 'warn' : 'err'), 'data-testid': 'mig-result', 'data-status': result.status }, ok ? I.ok() : half ? I.warn() : I.err(), h('div', null, h('b', null, ok ? S.migDone : half ? S.migHalf : result.restoredOld ? S.migRestored : result.failure?.kind === 'provided' ? S.providedBlockedT : S.fFailedT), h('span', null, !ok && !half && !result.restoredOld ? (result.failure?.kind === 'provided' ? S.providedBlockedB : result.failure?.diagnostic || '').slice(0, 300) : '')))),
         h('div', { className: 'mf', key: 'f' }, h('button', { className: 'btn primary big', onClick: () => setModal(null) }, S.gotIt))]
     }
     const UninstallResult = () => {

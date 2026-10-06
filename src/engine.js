@@ -47,17 +47,49 @@ export function resolvePlan(catalog, wantedIds) {
   return out
 }
 
+/** Installation-provided packages have no profile-owned source and cannot be removed. */
+export function providedByApp(bundle) {
+  return bundle?.removable === false && !bundle.source
+}
+
+/** Presence includes installation-provided bundles, not only profile dependencies. */
+export function bundlePresent(bundle) {
+  return !!bundle?.installed || providedByApp(bundle)
+}
+
+/** A shipped bundle can run through a default layer without being selected in the profile. */
+export async function readBundleInventory(pm) {
+  const result = await pm.listBundles()
+  if (!result?.ok || !result.value.some(providedByApp)) return result
+  let plugins
+  try {
+    const answer = await pm.listPlugins()
+    if (answer?.ok) plugins = answer.value
+  } catch { /* Still recognise the shipped package; never install a second copy to recover a failed read. */ }
+  return { ...result, value: result.value.map((b) => !providedByApp(b) ? b : {
+    ...b,
+    enabled: !b.error && (!!b.enabled || !!plugins?.some((p) => p.enabled && (b.rows ?? []).some((row) =>
+      row.entryId === p.entryId && row.moduleName === p.moduleName))),
+  }) }
+}
+
+/** Whether a plan row needs work, including a legacy copy beside the new built-in package. */
+export function needsInstall(row, update = false) {
+  return update || !(row.installed && row.enabled) || !!(row.provided && row.legacy)
+}
+
 /**
- * Which of the planned plugins are already installed, by npm name. A row also names an installed package that is an
- * older name of the plugin (`legacy`, with `legacyEnabled`), so installing it switches over instead of running both.
+ * Which of the planned plugins are already present, by npm name. `provided` means the application owns the package.
+ * A row also names a profile-owned older package (`legacy`), so installing it switches over instead of running both.
  */
 export function markInstalled(plan, bundles) {
-  const have = new Map((bundles ?? []).filter((b) => b.installed).map((b) => [b.name, b]))
+  const have = new Map((bundles ?? []).filter(bundlePresent).map((b) => [b.name, b]))
   return plan.map((p) => {
     const b = have.get(p.npm)
-    const legacy = (p.legacyNames ?? []).find((name) => have.has(name))
+    const legacy = (p.legacyNames ?? []).find((name) => have.get(name)?.installed && !providedByApp(have.get(name)))
     return {
       entry: p, installed: !!b, enabled: !!b?.enabled, installedVersion: b?.version,
+      ...(providedByApp(b) ? { provided: true } : {}),
       ...(legacy ? { legacy, legacyEnabled: !!have.get(legacy).enabled } : {}),
     }
   })
@@ -222,6 +254,12 @@ export async function installOne(pm, entry, state, opts = {}) {
   const requestId = newRequestId()
   hooks.onRequest?.(requestId, entry)
 
+  if (state?.provided) {
+    if (update || !state.enabled) return { status: 'failed', failure: { kind: 'provided' } }
+    if (!state.legacy) return { status: 'skipped' }
+    const moved = await migrate(pm, entry, state.legacy, opts)
+    return moved.status === 'halfRemoved' ? { status: 'done', legacyLeft: state.legacy } : moved
+  }
   if (!update && state?.installed && state?.enabled) return { status: 'skipped' }
   if (!update && state?.installed && !state?.enabled) {
     const on = await switchOn(pm, entry, state, step)
@@ -325,25 +363,34 @@ export async function installPlan(pm, rows, opts = {}) {
 export async function migrate(pm, entry, legacyName, opts = {}) {
   const hooks = opts.hooks ?? {}
   const say = (s) => hooks.onStep?.(s, entry)
-  say('inspect')
-  const ins = await pm.inspect(specOf(entry), { registry: opts.registry ?? null })
-  if (!ins?.ok || ins.value.status === 'refused' && ins.value.problem !== 'already-installed') {
-    return { status: 'failed', phase: 'inspect', failure: { kind: 'network', diagnostic: ins?.error?.message ?? ins?.value?.reason } }
-  }
-  if (!(ins.value.status === 'refused' && ins.value.problem === 'already-installed')) {
-    say('install')
-    const inst = await pm.installBundle(specOf(entry), { enabled: false, requestId: newRequestId(), registry: ins.value.registry ?? null })
-    if (!inst?.ok || inst.value.application === 'failed') return { status: 'failed', phase: 'install', failure: classifyFailure(inst?.value ?? {}) }
+  const inventory = await readBundleInventory(pm)
+  if (!inventory?.ok) return { status: 'failed', phase: 'inspect', failure: { kind: 'network', diagnostic: 'could not read current bundles' } }
+  const supplied = inventory.value.find((b) => b.name === entry.npm && providedByApp(b))
+  const old = inventory.value.find((b) => b.name === legacyName)
+  if (providedByApp(old) || supplied && !supplied.enabled) return { status: 'failed', phase: 'inspect', failure: { kind: 'provided' } }
+  if (!supplied) {
+    say('inspect')
+    const ins = await pm.inspect(specOf(entry), { registry: opts.registry ?? null })
+    if (!ins?.ok || ins.value.status === 'refused' && ins.value.problem !== 'already-installed') {
+      return { status: 'failed', phase: 'inspect', failure: { kind: 'network', diagnostic: ins?.error?.message ?? ins?.value?.reason } }
+    }
+    if (!(ins.value.status === 'refused' && ins.value.problem === 'already-installed')) {
+      say('install')
+      const inst = await pm.installBundle(specOf(entry), { enabled: false, requestId: newRequestId(), registry: ins.value.registry ?? null })
+      if (!inst?.ok || inst.value.application === 'failed') return { status: 'failed', phase: 'install', failure: classifyFailure(inst?.value ?? {}) }
+    }
   }
   say('disable-old')
   const off = await pm.setBundleEnabled(legacyName, false)
   if (!off?.ok || off.value?.application === 'failed') return { status: 'failed', phase: 'disable-old', failure: { kind: 'failed', diagnostic: off?.error?.message ?? 'could not disable the old package' }, oldStillEnabled: true }
-  say('enable')
-  const on = await pm.setBundleEnabled(entry.npm, true)
-  if (!on?.ok || on.value?.application === 'failed') {
-    // Put the old one back so the user is not left with neither.
-    await pm.setBundleEnabled(legacyName, true)
-    return { status: 'failed', phase: 'enable-new', failure: classifyFailure(on?.value ?? {}), restoredOld: true }
+  if (!supplied) {
+    say('enable')
+    const on = await pm.setBundleEnabled(entry.npm, true)
+    if (!on?.ok || on.value?.application === 'failed') {
+      // Put the old one back so the user is not left with neither.
+      await pm.setBundleEnabled(legacyName, true)
+      return { status: 'failed', phase: 'enable-new', failure: classifyFailure(on?.value ?? {}), restoredOld: true }
+    }
   }
   say('remove-old')
   const rm = await pm.removeBundle(legacyName)
@@ -358,6 +405,9 @@ export async function migrate(pm, entry, legacyName, opts = {}) {
  * the last step leaves the plugin disabled but still installed. We detect that and say so.
  */
 export async function uninstall(pm, entry) {
+  const inventory = await pm.listBundles()
+  if (!inventory?.ok) return { status: 'failed', failure: { kind: 'network', diagnostic: 'could not read current bundles' } }
+  if (providedByApp(inventory.value.find((b) => b.name === entry.npm))) return { status: 'failed', failure: { kind: 'provided' } }
   const r = await pm.removeBundle(entry.npm)
   if (!r?.ok) return { status: 'failed', failure: { kind: 'failed', diagnostic: r?.error?.message ?? 'remove failed' } }
   if (r.value?.application === 'failed') {
@@ -370,7 +420,7 @@ export async function uninstall(pm, entry) {
 
 /** Compare installed versions with the catalog. Only center-managed entries are offered for update. */
 export function pendingUpdates(catalog, bundles) {
-  const have = new Map((bundles ?? []).filter((b) => b.installed).map((b) => [b.name, b.version]))
+  const have = new Map((bundles ?? []).filter((b) => b.installed && !providedByApp(b)).map((b) => [b.name, b.version]))
   const out = []
   for (const p of catalog.plugins) {
     if (p.updates !== 'center') continue
@@ -389,8 +439,8 @@ export function compareSemver(a, b) {
 
 /** Which legacy packages are installed (so the migration banner should show). */
 export function legacyInstalled(catalog, bundles) {
-  const have = new Set((bundles ?? []).filter((b) => b.installed).map((b) => b.name))
+  const have = new Map((bundles ?? []).filter(bundlePresent).map((b) => [b.name, b]))
   const out = []
-  for (const p of catalog.plugins) for (const l of p.legacyNames ?? []) if (have.has(l)) out.push({ entry: p, legacy: l, newInstalled: have.has(p.npm) })
+  for (const p of catalog.plugins) for (const l of p.legacyNames ?? []) if (have.get(l)?.installed && !providedByApp(have.get(l))) out.push({ entry: p, legacy: l, newInstalled: have.has(p.npm), ...(providedByApp(have.get(p.npm)) ? { provided: true } : {}) })
   return out
 }

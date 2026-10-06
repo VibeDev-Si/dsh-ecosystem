@@ -66,7 +66,13 @@ export function createFakePm(initial = [], scenarios = {}, options = {}) {
       bundles.delete(name)
       return ok({ changed: true, application: 'applied', stage: 'remove', target: name })
     },
-    async listBundles() { calls.push(['listBundles']); return ok([...bundles.values()].map((b) => ({ name: b.name, version: b.version, enabled: b.enabled, installed: b.installed, optional: false, removable: true, rows: [], overrides: [] }))) },
+    async listBundles() { calls.push(['listBundles']); return ok([...bundles.values()].map((b) => ({ ...b, optional: b.optional ?? false, removable: b.removable ?? true, rows: b.rows ?? [], overrides: [] }))) },
+    async listPlugins() {
+      calls.push(['listPlugins'])
+      return ok([...bundles.values()].flatMap((b) => (b.rows ?? []).filter((r) => r.entryId).map((r) => ({
+        entryId: r.entryId, moduleName: r.moduleName, enabled: b.liveEnabled ?? b.enabled,
+      }))))
+    },
     async cancelInstall(requestId) { calls.push(['cancelInstall', requestId]); return ok({ status: 'cancelled' }) },
     // The REAL shape (read from a live self-check): { registry, fallbackRegistries, resolved }.
     // `resolved` defaults to the official registry; options.resolved = 'https://registry.npmmirror.com' reproduces a user whose pnpm already uses the mirror.

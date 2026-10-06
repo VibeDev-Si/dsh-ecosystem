@@ -56,17 +56,49 @@ function resolvePlan(catalog, wantedIds) {
   return out
 }
 
+/** Installation-provided packages have no profile-owned source and cannot be removed. */
+function providedByApp(bundle) {
+  return bundle?.removable === false && !bundle.source
+}
+
+/** Presence includes installation-provided bundles, not only profile dependencies. */
+function bundlePresent(bundle) {
+  return !!bundle?.installed || providedByApp(bundle)
+}
+
+/** A shipped bundle can run through a default layer without being selected in the profile. */
+async function readBundleInventory(pm) {
+  const result = await pm.listBundles()
+  if (!result?.ok || !result.value.some(providedByApp)) return result
+  let plugins
+  try {
+    const answer = await pm.listPlugins()
+    if (answer?.ok) plugins = answer.value
+  } catch { /* Still recognise the shipped package; never install a second copy to recover a failed read. */ }
+  return { ...result, value: result.value.map((b) => !providedByApp(b) ? b : {
+    ...b,
+    enabled: !b.error && (!!b.enabled || !!plugins?.some((p) => p.enabled && (b.rows ?? []).some((row) =>
+      row.entryId === p.entryId && row.moduleName === p.moduleName))),
+  }) }
+}
+
+/** Whether a plan row needs work, including a legacy copy beside the new built-in package. */
+function needsInstall(row, update = false) {
+  return update || !(row.installed && row.enabled) || !!(row.provided && row.legacy)
+}
+
 /**
- * Which of the planned plugins are already installed, by npm name. A row also names an installed package that is an
- * older name of the plugin (`legacy`, with `legacyEnabled`), so installing it switches over instead of running both.
+ * Which of the planned plugins are already present, by npm name. `provided` means the application owns the package.
+ * A row also names a profile-owned older package (`legacy`), so installing it switches over instead of running both.
  */
 function markInstalled(plan, bundles) {
-  const have = new Map((bundles ?? []).filter((b) => b.installed).map((b) => [b.name, b]))
+  const have = new Map((bundles ?? []).filter(bundlePresent).map((b) => [b.name, b]))
   return plan.map((p) => {
     const b = have.get(p.npm)
-    const legacy = (p.legacyNames ?? []).find((name) => have.has(name))
+    const legacy = (p.legacyNames ?? []).find((name) => have.get(name)?.installed && !providedByApp(have.get(name)))
     return {
       entry: p, installed: !!b, enabled: !!b?.enabled, installedVersion: b?.version,
+      ...(providedByApp(b) ? { provided: true } : {}),
       ...(legacy ? { legacy, legacyEnabled: !!have.get(legacy).enabled } : {}),
     }
   })
@@ -231,6 +263,12 @@ async function installOne(pm, entry, state, opts = {}) {
   const requestId = newRequestId()
   hooks.onRequest?.(requestId, entry)
 
+  if (state?.provided) {
+    if (update || !state.enabled) return { status: 'failed', failure: { kind: 'provided' } }
+    if (!state.legacy) return { status: 'skipped' }
+    const moved = await migrate(pm, entry, state.legacy, opts)
+    return moved.status === 'halfRemoved' ? { status: 'done', legacyLeft: state.legacy } : moved
+  }
   if (!update && state?.installed && state?.enabled) return { status: 'skipped' }
   if (!update && state?.installed && !state?.enabled) {
     const on = await switchOn(pm, entry, state, step)
@@ -334,25 +372,34 @@ async function installPlan(pm, rows, opts = {}) {
 async function migrate(pm, entry, legacyName, opts = {}) {
   const hooks = opts.hooks ?? {}
   const say = (s) => hooks.onStep?.(s, entry)
-  say('inspect')
-  const ins = await pm.inspect(specOf(entry), { registry: opts.registry ?? null })
-  if (!ins?.ok || ins.value.status === 'refused' && ins.value.problem !== 'already-installed') {
-    return { status: 'failed', phase: 'inspect', failure: { kind: 'network', diagnostic: ins?.error?.message ?? ins?.value?.reason } }
-  }
-  if (!(ins.value.status === 'refused' && ins.value.problem === 'already-installed')) {
-    say('install')
-    const inst = await pm.installBundle(specOf(entry), { enabled: false, requestId: newRequestId(), registry: ins.value.registry ?? null })
-    if (!inst?.ok || inst.value.application === 'failed') return { status: 'failed', phase: 'install', failure: classifyFailure(inst?.value ?? {}) }
+  const inventory = await readBundleInventory(pm)
+  if (!inventory?.ok) return { status: 'failed', phase: 'inspect', failure: { kind: 'network', diagnostic: 'could not read current bundles' } }
+  const supplied = inventory.value.find((b) => b.name === entry.npm && providedByApp(b))
+  const old = inventory.value.find((b) => b.name === legacyName)
+  if (providedByApp(old) || supplied && !supplied.enabled) return { status: 'failed', phase: 'inspect', failure: { kind: 'provided' } }
+  if (!supplied) {
+    say('inspect')
+    const ins = await pm.inspect(specOf(entry), { registry: opts.registry ?? null })
+    if (!ins?.ok || ins.value.status === 'refused' && ins.value.problem !== 'already-installed') {
+      return { status: 'failed', phase: 'inspect', failure: { kind: 'network', diagnostic: ins?.error?.message ?? ins?.value?.reason } }
+    }
+    if (!(ins.value.status === 'refused' && ins.value.problem === 'already-installed')) {
+      say('install')
+      const inst = await pm.installBundle(specOf(entry), { enabled: false, requestId: newRequestId(), registry: ins.value.registry ?? null })
+      if (!inst?.ok || inst.value.application === 'failed') return { status: 'failed', phase: 'install', failure: classifyFailure(inst?.value ?? {}) }
+    }
   }
   say('disable-old')
   const off = await pm.setBundleEnabled(legacyName, false)
   if (!off?.ok || off.value?.application === 'failed') return { status: 'failed', phase: 'disable-old', failure: { kind: 'failed', diagnostic: off?.error?.message ?? 'could not disable the old package' }, oldStillEnabled: true }
-  say('enable')
-  const on = await pm.setBundleEnabled(entry.npm, true)
-  if (!on?.ok || on.value?.application === 'failed') {
-    // Put the old one back so the user is not left with neither.
-    await pm.setBundleEnabled(legacyName, true)
-    return { status: 'failed', phase: 'enable-new', failure: classifyFailure(on?.value ?? {}), restoredOld: true }
+  if (!supplied) {
+    say('enable')
+    const on = await pm.setBundleEnabled(entry.npm, true)
+    if (!on?.ok || on.value?.application === 'failed') {
+      // Put the old one back so the user is not left with neither.
+      await pm.setBundleEnabled(legacyName, true)
+      return { status: 'failed', phase: 'enable-new', failure: classifyFailure(on?.value ?? {}), restoredOld: true }
+    }
   }
   say('remove-old')
   const rm = await pm.removeBundle(legacyName)
@@ -367,6 +414,9 @@ async function migrate(pm, entry, legacyName, opts = {}) {
  * the last step leaves the plugin disabled but still installed. We detect that and say so.
  */
 async function uninstall(pm, entry) {
+  const inventory = await pm.listBundles()
+  if (!inventory?.ok) return { status: 'failed', failure: { kind: 'network', diagnostic: 'could not read current bundles' } }
+  if (providedByApp(inventory.value.find((b) => b.name === entry.npm))) return { status: 'failed', failure: { kind: 'provided' } }
   const r = await pm.removeBundle(entry.npm)
   if (!r?.ok) return { status: 'failed', failure: { kind: 'failed', diagnostic: r?.error?.message ?? 'remove failed' } }
   if (r.value?.application === 'failed') {
@@ -379,7 +429,7 @@ async function uninstall(pm, entry) {
 
 /** Compare installed versions with the catalog. Only center-managed entries are offered for update. */
 function pendingUpdates(catalog, bundles) {
-  const have = new Map((bundles ?? []).filter((b) => b.installed).map((b) => [b.name, b.version]))
+  const have = new Map((bundles ?? []).filter((b) => b.installed && !providedByApp(b)).map((b) => [b.name, b.version]))
   const out = []
   for (const p of catalog.plugins) {
     if (p.updates !== 'center') continue
@@ -398,13 +448,13 @@ function compareSemver(a, b) {
 
 /** Which legacy packages are installed (so the migration banner should show). */
 function legacyInstalled(catalog, bundles) {
-  const have = new Set((bundles ?? []).filter((b) => b.installed).map((b) => b.name))
+  const have = new Map((bundles ?? []).filter(bundlePresent).map((b) => [b.name, b]))
   const out = []
-  for (const p of catalog.plugins) for (const l of p.legacyNames ?? []) if (have.has(l)) out.push({ entry: p, legacy: l, newInstalled: have.has(p.npm) })
+  for (const p of catalog.plugins) for (const l of p.legacyNames ?? []) if (have.get(l)?.installed && !providedByApp(have.get(l))) out.push({ entry: p, legacy: l, newInstalled: have.has(p.npm), ...(providedByApp(have.get(p.npm)) ? { provided: true } : {}) })
   return out
 }
 
-const E = { specOf, resolvePlan, markInstalled, classifyFailure, cooldownEnds, eligibleMirror, chooseRegistry, judgeSelfUpdate, cooldownState, trackLoadedChanges, waitQuiet, readableTextOn, contrastRatio, installOne, installPlan, migrate, uninstall, pendingUpdates, compareSemver, legacyInstalled };
+const E = { specOf, resolvePlan, providedByApp, bundlePresent, readBundleInventory, needsInstall, markInstalled, classifyFailure, cooldownEnds, eligibleMirror, chooseRegistry, judgeSelfUpdate, cooldownState, trackLoadedChanges, waitQuiet, readableTextOn, contrastRatio, installOne, installPlan, migrate, uninstall, pendingUpdates, compareSemver, legacyInstalled };
 /**
  * i18n for the center. Plain objects; the catalog carries its own zh/en text.
  * The host locale id looks like "zh" / "zh-CN" / "en" ...; anything starting with "zh" gets Chinese.
@@ -426,6 +476,9 @@ const STR = {
     install: '安装', installWithDeps: '安装（含依赖）', enabled: '已启用', disabled: '已停用', enable: '启用', manage: '管理 ▾',
     disable: '停用（保留数据）', uninstall: '卸载', details: '查看详情',
     updateTo: (v) => `更新到 ${v}`,
+    provided: '应用内置', providedNote: '此插件随应用提供，无需重复安装；版本随应用更新。在设置的插件页查看运行状态。',
+    providedBlockedT: '这个插件由应用提供', providedBlockedB: '插件中心不会重装、更新或卸载内置插件。请在设置的插件页检查是否启用，并通过更新应用升级它。',
+    providedMigration: '新包已经内置并启用：只停用、卸载旧外置包，保留内置的新包。',
     needs: (names) => `需要 ${names}`, satisfied: '（已满足）', willInstall: '（未安装，会一并安装）',
     suiteInstall: '一键安装套装', suiteDone: '套装已全部安装',
     suiteWill: (n, have, size) => `将安装 ${n} 个插件（已装 ${have} 个）· ${size}`,
@@ -522,6 +575,9 @@ const STR = {
     install: 'Install', installWithDeps: 'Install (with dependencies)', enabled: 'Enabled', disabled: 'Disabled', enable: 'Enable', manage: 'Manage ▾',
     disable: 'Disable (keep data)', uninstall: 'Uninstall', details: 'Details',
     updateTo: (v) => `Update to ${v}`,
+    provided: 'Built into the app', providedNote: 'This plugin is supplied by the app; no separate installation is needed. Update the app to upgrade it, and check its status on the Plugins settings page.',
+    providedBlockedT: 'This plugin is supplied by the app', providedBlockedB: 'The center does not reinstall, update or remove built-in plugins. Check their enablement on the Plugins settings page, and upgrade them by updating the app.',
+    providedMigration: 'The new package is already built in and enabled: disable and remove only the old external package, leaving the built-in one in place.',
     needs: (names) => `Needs ${names}`, satisfied: ' (satisfied)', willInstall: ' (not installed, will be added)',
     suiteInstall: 'Install the suite', suiteDone: 'Suite fully installed',
     suiteWill: (n, have, size) => `Will install ${n} plugin(s) (${have} already installed) · ${size}`,
@@ -779,7 +835,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const refresh = useCallback(async () => {
       if (!host.pm) { setBundles(false); return }
       try {
-        const r = await host.pm.listBundles()
+        const r = await E.readBundleInventory(host.pm)
         setBundles(r?.ok ? r.value : false)
         if (r?.ok) {
           tracker.current = E.trackLoadedChanges(tracker.current, r.value)
@@ -789,10 +845,12 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }, [])
     useEffect(() => { refresh(); return host.onChanged?.(refresh) }, [refresh])
 
-    const have = useMemo(() => new Map((bundles || []).filter((b) => b.installed).map((b) => [b.name, b])), [bundles])
+    const have = useMemo(() => new Map((bundles || []).filter(E.bundlePresent).map((b) => [b.name, b])), [bundles])
     const isIn = (p) => have.has(p.npm)
     const isOn = (p) => !!have.get(p.npm)?.enabled
-    const missingDeps = (p) => (p.requires || []).filter((d) => !isIn(byId(d)))
+    const isProvided = (p) => E.providedByApp(have.get(p.npm))
+    const shownVersion = (p) => isProvided(p) ? have.get(p.npm)?.version ?? p.version : p.version
+    const missingDeps = (p) => (p.requires || []).filter((d) => !isIn(byId(d)) || isProvided(byId(d)) && !isOn(byId(d)))
     const updates = useMemo(() => (bundles ? E.pendingUpdates(catalog, bundles) : []), [bundles])
     const legacy = useMemo(() => (bundles ? E.legacyInstalled(catalog, bundles).filter((x) => !x.newInstalled || true) : []), [bundles])
 
@@ -815,7 +873,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       setModal({ mode: 'confirm', rows, title, update: !!opts.update })
     }
     const start = async (rows, title, update, approved) => {
-      const run = { rows: rows.map((r) => ({ ...r, st: r.installed && r.enabled && !update ? 'skip' : 'wait', sub: '' })), log: [], title, update, cur: null, approved: approved || {} }
+      const run = { rows: rows.map((r) => ({ ...r, st: E.needsInstall(r, update) ? 'wait' : 'skip', sub: '' })), log: [], title, update, cur: null, approved: approved || {} }
       aborter.current = new AbortController()
       setModal({ mode: 'run', run: { ...run } })
       const upd = () => setModal({ mode: 'run', run: { ...run, rows: run.rows.map((r) => ({ ...r })) } })
@@ -896,6 +954,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const SELF_PKG = '@vibedev-si/dsh-ecosystem'
     const copyPkg = () => { host.copy?.(SELF_PKG); setCopied(true); setTimeout(() => setCopied(false), 2000) }
     const stateBtn = (p) => {
+      if (isProvided(p)) return h('span', { className: 'btn ' + (isOn(p) ? 'ok' : ''), 'data-testid': 'provided', title: S.providedNote }, S.provided, ' · ', isOn(p) ? S.enabled : S.disabled)
       if (isIn(p)) {
         const on = isOn(p)
         const up = updates.find((u) => u.entry.id === p.id)
@@ -920,7 +979,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
           S.needs((p.requires || []).map((d) => L(byId(d).name, lang)).join(', ')), m.length ? S.willInstall : S.satisfied)
         : null
       return h('div', { className: 'card', key: p.id, 'data-id': p.id, onClick: () => setDrawer(p.id) },
-        h('div', { className: 'hd' }, Glyph(p), h('div', null, h('div', { className: 'nm' }, L(p.name, lang)), h('div', { className: 'sub' }, `${p.npm} · ${p.version}`))),
+        h('div', { className: 'hd' }, Glyph(p), h('div', null, h('div', { className: 'nm' }, L(p.name, lang)), h('div', { className: 'sub' }, `${p.npm} · ${shownVersion(p)}`))),
         h('div', { className: 'tg' }, L(p.tagline, lang)),
         h('div', { className: 'tags' }, tagEls(p)),
         dep,
@@ -930,7 +989,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const Suite = () => {
       const s = catalog.suites[0]
       const items = s.items.map(byId)
-      const todo = items.filter((p) => !isIn(p) || !isOn(p))
+      const todo = items.filter((p) => !isIn(p) || !isOn(p) || isProvided(p) && legacy.some((x) => x.entry.id === p.id))
       const filmish = todo.some((p) => p.sizeKB > 10000)
       const chips = []
       items.forEach((p, i) => {
@@ -986,7 +1045,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         h('button', { className: 'lnk', onClick: () => (marketIn ? setView('community') : openInstall([MARKET], `${S.install} ${L(byId(MARKET).name, lang)}`)) }, marketIn ? S.openMarket : S.installMarket)))
 
     const Banner = () => legacy.map((x) => h('div', { className: 'banner', key: x.legacy, 'data-testid': 'migrate-banner' }, I.warn(),
-      h('div', { className: 'grow' }, h('b', null, S.migrateTitle(x.legacy)), ' ', S.migrateBody(x.legacy, x.entry.npm), h('small', null, S.migrateOrder)),
+      h('div', { className: 'grow' }, h('b', null, S.migrateTitle(x.legacy)), ' ', S.migrateBody(x.legacy, x.entry.npm), h('small', null, x.provided ? S.providedMigration : S.migrateOrder)),
       h('button', { className: 'btn primary', onClick: () => doMigrate(x) }, S.migrateBtn)))
 
     const Community = () => {
@@ -1025,7 +1084,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       return [
         h('div', { className: 'mask', key: 'm', onClick: () => setDrawer(null) }),
         h('aside', { className: 'drawer', key: 'd', 'data-testid': 'drawer' },
-          h('div', { className: 'dh' }, h('div', { className: 'row' }, Glyph(p), h('div', null, h('h2', null, L(p.name, lang)), h('div', { className: 'sub' }, `${p.npm} · ${p.version} · ${p.origin === 'official' ? S.officialSrc : S.communitySrc(p.author)}`)),
+          h('div', { className: 'dh' }, h('div', { className: 'row' }, Glyph(p), h('div', null, h('h2', null, L(p.name, lang)), h('div', { className: 'sub' }, `${p.npm} · ${shownVersion(p)} · ${p.origin === 'official' ? S.officialSrc : S.communitySrc(p.author)}`)),
             h('button', { className: 'x', onClick: () => setDrawer(null) }, '×')), h('div', { className: 'tags', style: { marginTop: 10 } }, tagEls(p))),
           h('div', { className: 'db' },
             h('div', null, L(p.tagline, lang)),
@@ -1041,9 +1100,9 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
               h('dt', null, S.source), h('dd', null, p.origin === 'official' ? S.officialSrc : S.communitySrc(p.author)),
               h('dt', null, S.review), h('dd', null, p.origin === 'official' ? S.officialReview : p.reviewed ? S.reviewedBy(p.reviewed.tested.join(', '), p.reviewed.date) : S.notReviewed),
               p.compat ? [h('dt', { key: 'a' }, S.compat), h('dd', { key: 'b' }, `${S.compatS[p.compat.s]}: ${L(p.compat.why, lang)}`)] : null),
-            h('h4', null, S.manualH), h('pre', { className: 'cmd' }, p.cmd), h('div', { className: 'note' }, S.manualNote),
-            h('div', { className: 'links' }, h('button', { onClick: () => host.openUrl?.(p.links.repo) }, S.repo), h('button', { onClick: () => host.openUrl?.(p.links.npm) }, S.npm), h('button', { onClick: () => host.copy?.(p.cmd) }, S.copyCmd))),
-          h('div', { className: 'dfoot' }, h('div', { className: 'grow' }, isIn(p) ? S.enabled : m.length ? S.willInstall : ''), isIn(p) ? h('button', { className: 'btn', disabled: true }, S.enabled)
+            h('h4', null, isProvided(p) ? S.provided : S.manualH), isProvided(p) ? h('div', { className: 'note', 'data-testid': 'provided-note' }, S.providedNote) : [h('pre', { className: 'cmd', key: 'cmd' }, p.cmd), h('div', { className: 'note', key: 'note' }, S.manualNote)],
+            h('div', { className: 'links' }, h('button', { onClick: () => host.openUrl?.(p.links.repo) }, S.repo), h('button', { onClick: () => host.openUrl?.(p.links.npm) }, S.npm), !isProvided(p) && h('button', { onClick: () => host.copy?.(p.cmd) }, S.copyCmd))),
+          h('div', { className: 'dfoot' }, h('div', { className: 'grow' }, isProvided(p) ? S.provided : isIn(p) ? (isOn(p) ? S.enabled : S.disabled) : m.length ? S.willInstall : ''), isIn(p) ? h('button', { className: 'btn', disabled: true }, isProvided(p) ? S.provided : isOn(p) ? S.enabled : S.disabled)
             : h('button', { className: 'btn primary big', disabled: !host.pm, onClick: () => openInstall([p.id], `${S.install} ${L(p.name, lang)}`) }, I.down(), ' ', m.length ? S.installWithDeps : S.install))),
       ]
     }
@@ -1064,17 +1123,17 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
     const Row = (r) => h('div', { className: 'row3 ' + (r.st === 'skip' ? 'skip' : ''), key: r.entry.id }, Glyph(r.entry, 'gl'),
       h('div', { className: 'm' }, h('b', null, L(r.entry.name, lang)), ' ', h('span', { style: { color: 'var(--t2)', fontWeight: 400 } }, r.update ? `${r.update.from} → ${r.update.to}` : r.entry.version),
-        h('div', null, r.st === 'skip' ? S.alreadyInstalled : r.update ? S.afterUpdateRefresh : r.legacy ? `${r.entry.npm} · ${S.replacesOld(r.legacy)}` : r.entry.npm)), stIcon(r))
+        h('div', null, r.st === 'skip' ? (r.provided ? S.provided + ' · ' + S.alreadyInstalled : S.alreadyInstalled) : r.update ? S.afterUpdateRefresh : r.legacy ? `${r.entry.npm} · ${S.replacesOld(r.legacy)}` : r.entry.npm)), stIcon(r))
 
     const Confirm = () => {
       const { rows, title, update } = modal
-      const todo = rows.filter((r) => update || !(r.installed && r.enabled))
+      const todo = rows.filter((r) => E.needsInstall(r, update))
       const accts = update ? [] : todo.filter((r) => (r.entry.tags || []).includes('needsAccount'))
       const switching = update ? [] : todo.filter((r) => r.legacy)
       return [
         h('div', { className: 'mh', key: 'h' }, h('h2', null, title), h('p', null, update ? S.willUpdateN(todo.length, sizeOf(todo.map((r) => r.entry))) : S.willInstallN(todo.length, rows.length - todo.length, sizeOf(todo.map((r) => r.entry))))),
         h('div', { className: 'mb', key: 'b' },
-          rows.map((r) => Row({ ...r, st: update || !(r.installed && r.enabled) ? 'wait-confirm' : 'skip', sub: '' })).map((el, i) => React.cloneElement(el, { key: i })),
+          rows.map((r) => Row({ ...r, st: E.needsInstall(r, update) ? 'wait-confirm' : 'skip', sub: '' })).map((el, i) => React.cloneElement(el, { key: i })),
           (() => {
             if (!update) return null
             const fresh = todo.filter((r) => E.cooldownState(r.entry.publishedAt).active)
@@ -1112,6 +1171,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         case 'mismatch': return [S.fMismatchT, S.fMismatchB(f.diagnostic || ''), 'err']
         case 'exempt': return [S.fExemptT, S.fExemptB(f.culprit, E.cooldownEnds(f.publishedAt)?.toLocaleString()), 'err']
         case 'busy': return [S.fBusyT, S.fBusyB, 'err']
+        case 'provided': return [S.providedBlockedT, S.providedBlockedB, 'warn']
         case 'refused': return [S.fRefusedT, f.diagnostic || '', 'err']
         default: return [S.fFailedT, f.diagnostic ? f.diagnostic.slice(0, 400) : S.fFailedB, 'err']
       }
@@ -1154,7 +1214,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
           failed?.uncertain && h('div', { className: 'res warn', key: 3 }, I.warn(), h('div', null, h('b', null, S.uncertainT), h('span', null, S.uncertainB))),
         ]
         const retryNow = () => start(run.rows.map((r) => ({ ...r, installed: r.st === 'ok' || r.installed && r.enabled, enabled: r.st === 'ok' || r.enabled })), run.title, update)
-        acts = f.kind === 'builds'
+        acts = f.kind === 'provided' ? h('button', { className: 'btn', onClick: () => setModal(null) }, S.gotIt) : f.kind === 'builds'
           ? [h('button', { className: 'btn', key: 's', onClick: () => setModal(null) }, S.skipThis), h('button', { className: 'btn primary big', key: 'r', 'data-testid': 'approve', onClick: () => start(run.rows.map((r) => ({ ...r, installed: r.st === 'ok' || (r.installed && r.enabled), enabled: r.st === 'ok' || r.enabled })), run.title, update, { [failedRow.entry.id]: f.pendingBuilds }) }, S.approveRetry)]
           : [h('button', { className: 'btn', key: 'c', onClick: () => { host.copy?.(failedRow ? failedRow.entry.cmd : ''); } }, S.copyCmd), h('button', { className: 'btn', key: 'x', onClick: () => setModal(null) }, S.later),
             f.kind !== 'incompat' && f.kind !== 'mismatch' && h('button', { className: 'btn primary big', key: 'r', 'data-testid': 'retry', onClick: failed?.uncertain ? async () => { await refresh(); setModal(null) } : retryNow }, failed?.uncertain ? S.recheck : S.retry)]
@@ -1167,12 +1227,12 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
     const Migrate = () => {
       const { x, phase, step, result } = modal
-      const steps = ['inspect', 'install', 'disable-old', 'enable', 'remove-old']
-      if (phase === 'run') return [h('div', { className: 'mh', key: 'h' }, h('h2', null, S.migrating), h('p', null, S.migrateOrder)),
+      const steps = x.provided ? ['disable-old', 'remove-old'] : ['inspect', 'install', 'disable-old', 'enable', 'remove-old']
+      if (phase === 'run') return [h('div', { className: 'mh', key: 'h' }, h('h2', null, S.migrating), h('p', null, x.provided ? S.providedMigration : S.migrateOrder)),
         h('div', { className: 'mb', key: 'b' }, steps.map((s, i) => h('div', { className: 'row3', key: s }, h('div', { className: 'm' }, h('b', null, `${i + 1}. ${s}`)), steps.indexOf(step) === i ? h('span', { className: 'stat' }, h('span', { className: 'spin' })) : steps.indexOf(step) > i ? h('span', { className: 'dotc ok' }, I.check(9)) : null)))]
       const ok = result.status === 'done', half = result.status === 'halfRemoved'
       return [h('div', { className: 'mh', key: 'h' }, h('h2', null, ok || half ? S.doneTitle : S.failTitle)),
-        h('div', { className: 'mb', key: 'b' }, h('div', { className: 'res ' + (ok ? 'ok' : half ? 'warn' : 'err'), 'data-testid': 'mig-result', 'data-status': result.status }, ok ? I.ok() : half ? I.warn() : I.err(), h('div', null, h('b', null, ok ? S.migDone : half ? S.migHalf : result.restoredOld ? S.migRestored : S.fFailedT), h('span', null, !ok && !half && !result.restoredOld ? (result.failure?.diagnostic || '').slice(0, 300) : '')))),
+        h('div', { className: 'mb', key: 'b' }, h('div', { className: 'res ' + (ok ? 'ok' : half ? 'warn' : 'err'), 'data-testid': 'mig-result', 'data-status': result.status }, ok ? I.ok() : half ? I.warn() : I.err(), h('div', null, h('b', null, ok ? S.migDone : half ? S.migHalf : result.restoredOld ? S.migRestored : result.failure?.kind === 'provided' ? S.providedBlockedT : S.fFailedT), h('span', null, !ok && !half && !result.restoredOld ? (result.failure?.kind === 'provided' ? S.providedBlockedB : result.failure?.diagnostic || '').slice(0, 300) : '')))),
         h('div', { className: 'mf', key: 'f' }, h('button', { className: 'btn primary big', onClick: () => setModal(null) }, S.gotIt))]
     }
     const UninstallResult = () => {

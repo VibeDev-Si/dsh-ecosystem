@@ -723,6 +723,64 @@ try {
     ok('English notice is fully English', !!n && !/[\u4e00-\u9fff]/.test(n) && n.includes('Do not reload the page') && n.includes('quit VibeDev completely'), n && n.slice(0, 90))
     await page.close()
   }
+
+  // Account plugin supplied by the app, enabled by a default layer, not selected in the user profile.
+  const providedAccount = (extra = {}) => ({ name: VD, version: ver(VD), installed: false, enabled: false,
+    liveEnabled: true, removable: false, optional: false,
+    rows: [{ rowId: 'dsh-vibedev', moduleName: VD, entryId: 'include:dsh-vibedev' }], ...extra })
+  const accountCard = '.card[data-id="@vibedev-si/dsh-vibedev"]'
+  {
+    const { page, errs } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }, providedAccount({ version: '0.2.0' })] })
+    const card = await page.$eval(accountCard, (el) => el.innerText)
+    ok('built-in account remains visible with the new package name and its actual supplied version', card.includes('VibeDev 账号与模型') && card.includes('@vibedev-si/dsh-vibedev · 0.2.0'))
+    ok('built-in enabled through default layers is labelled enabled and has no duplicate install or management button', card.includes('应用内置 · 已启用') && await page.$eval(accountCard, (el) => !el.querySelector('.btn.primary, .btn.idle')))
+    ok('suite counts the built-in account as already present', (await text(page)).includes('将安装 2 个插件（已装 2 个）'))
+    ok('built-in versions are not offered as separate npm updates', !(await page.evaluate(() => !!document.querySelector('[data-tab=updates] .n'))))
+    await click(page, '[data-tab=installed]')
+    ok('Installed tab includes the built-in account', await page.$eval(accountCard, (el) => el.innerText.includes('应用内置')))
+    await click(page, accountCard)
+    await page.waitForSelector('[data-testid=provided-note]')
+    const note = await page.$eval('[data-testid=provided-note]', (el) => el.innerText)
+    ok('built-in details explain app-managed updates and suppress duplicate installation commands', note.includes('随应用更新') && await page.$eval('[data-testid=drawer]', (el) => !el.querySelector('pre.cmd') && !el.innerText.includes('复制安装命令')))
+    ok('built-in inventory rendering has no browser errors', errs.length === 0, errs.join('; '))
+    await page.close()
+  }
+  {
+    const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }, providedAccount()] })
+    ok('film recognises its built-in prerequisite as satisfied', (await page.$eval('.card[data-id=dsh-film]', (el) => el.innerText)).includes('已满足'))
+    await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]')
+    ok('suite confirmation marks the built-in account as skipped', (await text(page)).includes('应用内置 · 已安装，跳过'))
+    await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
+    const c = await calls(page)
+    ok('suite installs only film and viewer, never another account plugin', c.filter((x) => x[0] === 'installBundle').map((x) => x[1]).join() === [spec('dsh-film'), spec(MV)].join())
+    ok('suite does not toggle or remove the built-in account', !c.some((x) => ['setBundleEnabled', 'removeBundle'].includes(x[0]) && x[1] === VD))
+    await page.close()
+  }
+  {
+    const { page } = await boot({ initial: [providedAccount({ liveEnabled: false })] })
+    ok('disabled built-in is not presented as enabled', (await page.$eval(accountCard, (el) => el.innerText)).includes('应用内置 · 已停用'))
+    await click(page, '.card[data-id=dsh-film] .btn.primary'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
+    await page.waitForSelector('[data-testid=fail][data-kind=provided]')
+    ok('disabled built-in stops prerequisite installation with actionable settings guidance', (await text(page)).includes('在设置的插件页检查') && !(await calls(page)).some((x) => ['installBundle', 'setBundleEnabled', 'removeBundle'].includes(x[0])))
+    ok('built-in failure does not offer pointless retry or duplicate install commands', !(await page.evaluate(() => !!document.querySelector('[data-testid=retry]'))) && !(await text(page)).includes('复制安装命令'))
+    await page.close()
+  }
+  {
+    const { page } = await boot({ initial: [providedAccount(), { name: 'dsh-media', version: '0.1.3' }] })
+    ok('legacy migration explicitly reuses the already enabled built-in account', (await page.$eval('[data-testid=migrate-banner]', (el) => el.innerText)).includes('只停用、卸载旧外置包'))
+    await clickText(page, '一键切换'); await page.waitForSelector('[data-testid=mig-result]')
+    const c = await calls(page)
+    ok('legacy migration removes only the old external package, not the built-in new package', (await page.evaluate(() => !window.__pm.bundles.has('dsh-media') && window.__pm.bundles.has('@vibedev-si/dsh-vibedev'))) && !c.some((x) => x[0] === 'installBundle' || ['setBundleEnabled','removeBundle'].includes(x[0]) && x[1] === VD))
+    await page.close()
+  }
+  {
+    const { page } = await boot({ locale: 'en', initial: [providedAccount()] })
+    await click(page, accountCard); await page.waitForSelector('[data-testid=provided-note]')
+    const note = await page.$eval('[data-testid=provided-note]', (el) => el.innerText)
+    ok('English built-in labels and explanation are fully translated', !( /[\u4e00-\u9fff]/.test(note)) && note.includes('Update the app') && (await text(page)).includes('Built into the app'))
+    await page.close()
+  }
+
 } catch (e) {
   ok('test run completed without throwing', false, String(e && e.stack || e))
 } finally {
