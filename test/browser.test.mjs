@@ -301,6 +301,37 @@ try {
     await shot(page, '19-drawer'); await page.close()
   }
 
+  // 13b ── declared relations in the drawer, and the old canvas
+  {
+    const { page, errs } = await boot({ initial: [{ name: 'dsh-film', version: '0.1.4' }, { name: VD, version: '0.2.1' }] })
+    await page.evaluate(() => document.querySelector('.card[data-id="dsh-film"]').click()); await page.waitForSelector('[data-testid=drawer]')
+    const rels = await page.evaluate(() => [...document.querySelectorAll('[data-testid^=rel-] .rel')]
+      .map((r) => ({ id: r.dataset.rel, role: r.querySelector('.tag')?.textContent, state: r.querySelector('.rs')?.textContent, action: r.querySelector('.lnk')?.textContent })))
+    ok('every declared relation names its role, what the Host has, and one way to it',
+      rels.length >= 2 // account (required) + viewer (partner)
+      && rels.every((r) => !!r.role && !!r.state && (r.action === '查看' || r.action === '查看与配置')), JSON.stringify(rels))
+    ok('an installed relation offers view-and-configure; a missing one offers view',
+      rels.find((r) => r.id === VD)?.action === '查看与配置' && rels.find((r) => r.id === MV)?.action === '查看', JSON.stringify(rels))
+    ok('no relation carries an install button (nothing can be installed twice)',
+      (await page.evaluate(() => document.querySelectorAll('[data-testid^=rel-] button').length)) === rels.length
+      && !(await page.evaluate(() => [...document.querySelectorAll('[data-testid^=rel-] button')].some((b) => /安装/.test(b.textContent)))))
+    const t = await text(page)
+    ok('an installed 0.1 canvas says so and promises the work is kept', t.includes('旧画布') && t.includes('film/ 作品'))
+    await shot(page, '19b-relations')
+    await click(page, '[data-testid=old-canvas-upgrade]'); await page.waitForSelector('[data-testid=confirm]')
+    const upgrade = await text(page)
+    ok('the upgrade goes through the ordinary confirm, is named as an update, and installs nothing yet',
+      upgrade.includes('更新到') && (await calls(page)).every((c) => c[0] !== 'installBundle'), upgrade.slice(0, 80))
+    await clickText(page, '取消')
+    // A relation itself opens the other plugin's own page: the same drawer state, no new navigation.
+    await page.evaluate(() => document.querySelector('.card[data-id="dsh-film"]').click()); await page.waitForSelector('[data-testid=drawer]')
+    await page.evaluate((mv) => [...document.querySelectorAll('[data-testid=rel-partners] .rel')].find((r) => r.dataset.rel === mv)?.querySelector('.lnk')?.click(), MV)
+    await sleep(80)
+    ok('following a relation opens that plugin\'s own page', (await text(page)).includes('媒体预览') && (await page.evaluate(() => !!document.querySelector('[data-testid=drawer]'))))
+    ok('no page errors while drawing relations', errs.length === 0, errs.join('; '))
+    await page.close()
+  }
+
   // 14 ── English + dark
   {
     const { page } = await boot({ locale: 'en', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })

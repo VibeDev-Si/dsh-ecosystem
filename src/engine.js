@@ -444,3 +444,48 @@ export function legacyInstalled(catalog, bundles) {
   for (const p of catalog.plugins) for (const l of p.legacyNames ?? []) if (have.get(l)?.installed && !providedByApp(have.get(l))) out.push({ entry: p, legacy: l, newInstalled: have.has(p.npm), ...(providedByApp(have.get(p.npm)) ? { provided: true } : {}) })
   return out
 }
+
+/**
+ * How one plugin's declared relations stand on this Host: its `requires` first, then its
+ * `partners`, each with what the catalogue says it is (`role`) and what the Host actually has.
+ * A relation is never an install button here: what the Host has is opened for viewing and
+ * configuration, and what it lacks is opened as well, where that plugin's own page offers the
+ * install. Nothing is installed from here, so nothing can be installed twice.
+ * @param entry - one catalog entry.
+ * @param lookup - (id) => entry, for naming a relation.
+ * @param bundles - the Host's bundle inventory.
+ * @returns one row per relation, in declaration order.
+ */
+export function relationsOf(entry, lookup, bundles) {
+  const have = new Map((bundles ?? []).filter(bundlePresent).map((b) => [b.name, b]))
+  const rows = []
+  const seen = new Set()
+  for (const [kind, ids] of [['requires', entry?.requires ?? []], ['partners', entry?.partners ?? []]]) {
+    for (const id of ids) {
+      const other = lookup?.(id)
+      if (!other || seen.has(id)) continue
+      seen.add(id)
+      const bundle = have.get(other.npm)
+      const provided = providedByApp(bundle)
+      rows.push({
+        kind, id, entry: other,
+        present: bundlePresent(bundle), provided, installed: !!bundle?.installed, enabled: !!bundle?.enabled,
+      })
+    }
+  }
+  return rows
+}
+
+/**
+ * Whether an installed `dsh-film` is the old canvas: 0.1 predates the film workbench, and the
+ * catalogue has a newer version to move to. The move is the centre's ordinary explicit update
+ * (confirm, then install), never a silent replacement, and it keeps the project files.
+ * @param entry - the catalog entry being viewed.
+ * @param bundle - the Host's row for it, if any.
+ * @returns whether the detail should offer the explicit upgrade.
+ */
+export function oldCanvas(entry, bundle) {
+  if (entry?.npm !== 'dsh-film' || !bundle?.installed || providedByApp(bundle)) return false
+  if (typeof bundle.version !== 'string' || typeof entry.version !== 'string') return false
+  return bundle.version.split('-')[0].startsWith('0.1.') && compareSemver(bundle.version, entry.version) < 0
+}

@@ -60,6 +60,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 .vdc .tags{display:flex;flex-wrap:wrap;gap:6px}.vdc .tag{font-size:11px;padding:1px 8px;border-radius:99px;background:var(--l2);color:var(--t2);white-space:nowrap}
 .vdc .tag.off{background:color-mix(in srgb,var(--brand) 14%,transparent);color:var(--brand);font-weight:600}.vdc .tag.acct{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
 .vdc .tag.role{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok);font-weight:600}
+.vdc .rels{display:flex;flex-direction:column;gap:6px}.vdc .rel{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.vdc .rel .rn{font-weight:500}.vdc .rel .rs{color:var(--t2);font-size:13px}.vdc .rel .lnk{margin-left:auto}
 .vdc .ft{display:flex;align-items:center;gap:10px;position:relative}.vdc .ft .meta{flex:1;color:var(--t2);font-size:12px}.vdc .acts{display:flex;gap:6px;align-items:center;position:relative}
 .vdc .dep{font-size:12px;color:var(--t2);display:flex;gap:6px;align-items:center}.vdc .dep.miss{color:var(--warn)}
 .vdc .menu{position:absolute;right:0;bottom:calc(100% + 6px);min-width:150px;background:var(--ov);border:1px solid var(--b2);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:4px;z-index:6}
@@ -194,6 +195,19 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       if (p.reviewed) tg.push('tested')
       return tg.map((t) => { const i = tagInfo(t, S); return i ? h('span', { key: t, className: 'tag ' + i[1] }, i[0]) : null })
     }
+    const roleEl = (role) => { const i = tagInfo(role, S); return i ? h('span', { className: 'tag ' + i[1] }, i[0]) : null }
+    const relationState = (r) => r.provided ? S.provided : r.installed ? (r.enabled ? S.enabled : S.disabled) : S.notInstalled
+    /** One declared relation: what it is, what this Host has, and the way to it. Never an install button. */
+    const relationEls = (ids, kind) => h('div', { className: 'rels', 'data-testid': 'rel-' + kind }, ids
+      .map((id) => (byId(id) === undefined ? null : E.relationsOf({ [kind]: [id] }, byId, bundles || [])[0]))
+      .filter(Boolean)
+      .map((r) => h('div', { className: 'rel', key: kind + ':' + r.id, 'data-rel': r.id },
+        h('span', { className: 'rn' }, L(r.entry.name, lang)),
+        roleEl(r.entry.role),
+        h('span', { className: 'rs' }, relationState(r)),
+        h('button', { className: 'lnk', onClick: () => setDrawer(r.id) }, r.present ? S.viewConfigure : S.view))))
+    /** A plugin needed as well as paired with is listed once, under what it is needed for. */
+    const partnerIds = (p) => { const required = new Set(p.requires || []); return (p.partners || []).filter((id) => !required.has(id)) }
 
     /* ── install flow ────────────────────────────────────────────────────── */
     const openInstall = (ids, title, opts = {}) => {
@@ -422,9 +436,11 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
             h('h4', null, S.does), h('ul', null, (p.does[lang] || p.does.en).map((d, i) => h('li', { key: i }, d))),
             h('h4', null, S.needsH),
             h('dl', { className: 'kv' },
-              h('dt', null, S.prereq), h('dd', null, (p.requires || []).length ? p.requires.map((d) => L(byId(d).name, lang) + (isIn(byId(d)) ? ` (${S.stDone})` : S.willInstall)).join(', ') : S.none),
-              h('dt', null, S.partners), h('dd', null, (p.partners || []).length ? p.partners.map((d) => L(byId(d).name, lang)).join(', ') : S.none),
+              h('dt', null, S.prereq), h('dd', null, (p.requires || []).length ? relationEls(p.requires, 'requires') : S.none),
+              h('dt', null, S.partners), h('dd', null, partnerIds(p).length ? relationEls(partnerIds(p), 'partners') : S.none),
               h('dt', null, S.size), h('dd', null, fmtSize(p.sizeKB))),
+            E.oldCanvas(p, have.get(p.npm)) ? h('div', { className: 'note', 'data-testid': 'old-canvas' }, S.oldCanvasNote,
+              h('button', { className: 'btn', 'data-testid': 'old-canvas-upgrade', onClick: () => openInstall([p.id], S.updateTo(shownVersion(p)), { update: true }) }, S.upgradeCanvas)) : null,
             h('h4', null, S.capsH), caps.map((c) => h('div', { className: 'cap', key: c.key }, h('b', null, capLabel(c.key, lang)), h('span', null, L(c.text, lang)))),
             h('h4', null, S.sourceH),
             h('dl', { className: 'kv' },

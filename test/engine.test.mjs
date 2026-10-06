@@ -568,4 +568,43 @@ await t('provided: failed old-package removal leaves the built-in package alone 
   assert.equal(pm.bundles.get(VD).installed, false); assert.equal(pm.bundles.get(VD).liveEnabled, true)
 })
 
+// ── relations & the old canvas ──────────────────────────────────────────────
+await t('relations: the creator suite is mutually paired, and every relation resolves', () => {
+  for (const p of catalog.plugins) {
+    for (const other of p.partners ?? []) assert.ok(by(other), `${p.id} partners with ${other}, which is in the catalog`)
+    for (const dep of p.requires ?? []) assert.ok(by(dep), `${p.id} requires ${dep}, which is in the catalog`)
+  }
+  const partners = (id) => by(id).partners ?? []
+  assert.ok(partners(VD).includes('dsh-film') && partners('dsh-film').includes(VD))
+  assert.ok(partners('dsh-film').includes(MV) && partners(MV).includes('dsh-film'))
+  assert.ok(partners(VD).includes(MV) && partners(MV).includes(VD))
+})
+
+await t('relations: the Host decides the row, and a relation is never an install', () => {
+  const rows = E.relationsOf(by('dsh-film'), by, [
+    { name: VD, installed: true, enabled: true, version: '0.2.1' },
+    { name: MV, installed: false, removable: false, version: '0.1.1' },
+  ])
+  assert.deepEqual(rows.map((r) => [r.id, r.kind, r.present, r.provided, r.enabled]), [
+    [VD, 'requires', true, false, true],
+    [MV, 'partners', true, true, false],
+  ])
+  assert.ok(E.relationsOf(by('dsh-film'), by, []).every((r) => !r.present && r.installed === false))
+  // Account is both required and paired with: it is listed once, as the requirement.
+  assert.equal(E.relationsOf(by('dsh-film'), by, []).filter((r) => r.id === VD).length, 1)
+  assert.deepEqual(E.relationsOf(by('dsh-better-sidebar'), by, []), [])
+  // A relation the catalog does not know is skipped rather than guessed at.
+  assert.equal(E.relationsOf({ requires: ['ghost'], partners: [] }, by, []).length, 0)
+})
+
+await t('old canvas: only an installed 0.1 film with a newer catalog version is offered the upgrade', () => {
+  const film = by('dsh-film')
+  assert.equal(E.oldCanvas(film, { installed: true, enabled: true, version: '0.1.4' }), true)
+  assert.equal(E.oldCanvas(film, { installed: true, enabled: true, version: film.version }), false)
+  assert.equal(E.oldCanvas(film, { installed: false, version: '0.1.4' }), false)
+  // The app's own built-in copy is never reinstalled or upgraded from here.
+  assert.equal(E.oldCanvas(film, { installed: false, removable: false, version: '0.1.4' }), false)
+  assert.equal(E.oldCanvas(by(VD), { installed: true, version: '0.1.0' }), false)
+  assert.equal(E.oldCanvas(film, { installed: true, version: 'not a version' }), false)
+})
 console.log(`\n${n} engine tests passed`)
