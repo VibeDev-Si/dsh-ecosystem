@@ -16,8 +16,8 @@
     {
       "id": "@vibedev-si/dsh-vibedev",
       "npm": "@vibedev-si/dsh-vibedev",
-      "version": "0.2.4",
-      "publishedAt": "2026-10-06T16:14:34.390Z",
+      "version": "0.2.5",
+      "publishedAt": "2026-10-06T17:26:07.523Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
@@ -48,7 +48,7 @@
       "requires": [],
       "partners": ["dsh-film", "@vibedev-si/dsh-media-viewer"],
       "legacyNames": ["dsh-media"],
-      "sizeKB": 1575,
+      "sizeKB": 1559,
       "capabilities": [
         { "key": "network", "text": { "zh": "发给 VibeDev 模型的对话、提示词和参考素材会发送到 VibeDev 网关，再转交模型服务商", "en": "Conversations with VibeDev models, prompts and reference media are sent to the VibeDev gateway, which forwards them to the model provider" } },
         { "key": "credentials", "text": { "zh": "在系统浏览器里登录 VibeDev，插件拿不到密码；登录凭据存在 DeepSeek Harness 的凭据存储里。在 VibeDev 应用里直接用已登录的账号", "en": "You sign in to VibeDev in your system browser and the plugin never sees the password; the sign-in is kept in DeepSeek Harness's credential store. Inside the VibeDev app the app's account is used" } },
@@ -65,8 +65,8 @@
     {
       "id": "dsh-film",
       "npm": "dsh-film",
-      "version": "0.3.2",
-      "publishedAt": "2026-10-06T16:13:44.722Z",
+      "version": "0.3.3",
+      "publishedAt": "2026-10-06T17:32:14.194Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
@@ -93,7 +93,7 @@
       "requires": ["@vibedev-si/dsh-vibedev"],
       "partners": ["@vibedev-si/dsh-vibedev", "@vibedev-si/dsh-media-viewer"],
       "legacyNames": [],
-      "sizeKB": 12235,
+      "sizeKB": 12216,
       "capabilities": [
         { "key": "writeFiles", "text": { "zh": "项目是工作区 film/ 下的普通文件；升级和卸载插件不会改动它们", "en": "A project is plain files under film/ in the workspace; upgrading or removing the plugin does not touch them" } },
         { "key": "agentTools", "text": { "zh": "为有影片的会话增加影视工具和说明，会占用部分上下文", "en": "Adds film tools and guidance to sessions with a film, using part of the context" } }
@@ -107,8 +107,8 @@
     {
       "id": "@vibedev-si/dsh-media-viewer",
       "npm": "@vibedev-si/dsh-media-viewer",
-      "version": "0.1.2",
-      "publishedAt": "2026-10-06T16:11:31.639Z",
+      "version": "0.1.3",
+      "publishedAt": "2026-10-06T17:29:57.454Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
@@ -135,7 +135,7 @@
       "requires": ["dsh-better-sidebar"],
       "partners": ["dsh-film", "@vibedev-si/dsh-vibedev"],
       "legacyNames": ["dsh-media-viewer"],
-      "sizeKB": 80,
+      "sizeKB": 64,
       "capabilities": [
         { "key": "readFiles", "text": { "zh": "只读取当前会话工作目录内的文件", "en": "Reads only files inside the current session's working directory" } },
         { "key": "localRoute", "text": { "zh": "在本机服务上增加 /mp 路由，仅回环地址可访问", "en": "Adds /mp routes to the local server, reachable from loopback only" } },

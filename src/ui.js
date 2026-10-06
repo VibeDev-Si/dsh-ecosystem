@@ -153,7 +153,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }, [])
     const [bundles, setBundles] = useState(null) // null = loading, false = unavailable
     const [view, setView] = useState('all')
-    const [intro, setIntro] = useState(true)
+    const [intro, setIntro] = useState(false)
     const [drawer, setDrawer] = useState(null)
     const [menu, setMenu] = useState(null)
     const [modal, setModal] = useState(null) // {mode:'confirm'|'run'|'result'|'migrate'|'uninstall', ...}
