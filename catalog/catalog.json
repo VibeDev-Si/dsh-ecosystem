@@ -17,7 +17,7 @@
       "id": "@vibedev-si/dsh-vibedev",
       "npm": "@vibedev-si/dsh-vibedev",
       "version": "0.2.1",
-      "publishedAt": "2026-10-06T00:00:00.000Z",
+      "publishedAt": "2026-10-06T05:08:23.767Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
@@ -65,8 +65,8 @@
     {
       "id": "dsh-film",
       "npm": "dsh-film",
-      "version": "0.3.0",
-      "publishedAt": "2026-10-05T08:47:54.172Z",
+      "version": "0.3.1",
+      "publishedAt": "2026-10-06T05:10:50.731Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
@@ -93,7 +93,7 @@
       "requires": ["@vibedev-si/dsh-vibedev"],
       "partners": [],
       "legacyNames": [],
-      "sizeKB": 12212,
+      "sizeKB": 12213,
       "capabilities": [
         { "key": "writeFiles", "text": { "zh": "项目是工作区 film/ 下的普通文件；升级和卸载插件不会改动它们", "en": "A project is plain files under film/ in the workspace; upgrading or removing the plugin does not touch them" } },
         { "key": "agentTools", "text": { "zh": "为有影片的会话增加影视工具和说明，会占用部分上下文", "en": "Adds film tools and guidance to sessions with a film, using part of the context" } }
