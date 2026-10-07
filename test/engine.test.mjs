@@ -607,4 +607,85 @@ await t('old canvas: only an installed 0.1 film with a newer catalog version is 
   assert.equal(E.oldCanvas(by(VD), { installed: true, version: '0.1.0' }), false)
   assert.equal(E.oldCanvas(film, { installed: true, version: 'not a version' }), false)
 })
+const releaseAnswer = () => ({ ok: true,
+  plugins: catalog.plugins.filter(p => p.origin === 'official').map(p => ({ name: p.npm, ok: true, version: p.version,
+    publishedAt: p.publishedAt, registry: 'https://registry.npmjs.org/', sizeKB: p.sizeKB })),
+  self: { ok: true, latest: '0.1.8', registry: 'https://registry.npmjs.org/' },
+})
+await t('live releases repair an old bundled catalog without changing its package allow-list or dependencies', () => {
+  const old = structuredClone(catalog)
+  old.plugins.find(p => p.id === VD).version = '0.2.4'
+  old.plugins.find(p => p.id === MV).version = '0.1.2'
+  old.plugins.find(p => p.id === 'dsh-film').version = '0.3.2'
+  const merged = E.catalogWithReleases(old, releaseAnswer())
+  const installed = [{ name: VD, version: '0.2.4', installed: true }, { name: MV, version: '0.1.2', installed: true }, { name: 'dsh-film', version: '0.3.2', installed: true }]
+  assert.equal(E.pendingUpdates(old, installed).length, 0)
+  assert.deepEqual(E.pendingUpdates(merged, installed).map(u => u.to), [by(VD).version, by('dsh-film').version, by(MV).version])
+  assert.deepEqual(merged.plugins.map(p => p.npm), old.plugins.map(p => p.npm))
+  assert.deepEqual(merged.plugins.map(p => p.requires), old.plugins.map(p => p.requires))
+  assert.equal(old.plugins.find(p => p.id === MV).version, '0.1.2')
+})
+await t('failed or malformed live answers leave the snapshot available and cannot claim current versions', () => {
+  for (const reply of [undefined, { ok: false }, { ok: true, plugins: [] }, { ...releaseAnswer(), self: { ok: false } }]) assert.equal(E.releasesComplete(catalog, reply), false)
+  const answer = releaseAnswer()
+  answer.plugins.forEach(p => { p.version = '9.9.9-beta'; p.registry = 'http://evil.example' })
+  assert.deepEqual(E.catalogWithReleases(catalog, answer).plugins, catalog.plugins)
+  assert.equal(E.releasesComplete(catalog, answer), false)
+})
+await t('live release cannot add unknown packages, change community snapshots, or downgrade a bundled version', () => {
+  const answer = releaseAnswer()
+  answer.plugins[0].version = '0.0.1'
+  answer.plugins.push({ name: 'left-pad', ok: true, version: '9.9.9', publishedAt: by(VD).publishedAt, registry: 'https://registry.npmjs.org/' })
+  answer.plugins.push({ name: 'dshmarket', ok: true, version: '9.9.9', publishedAt: by(VD).publishedAt, registry: 'https://registry.npmjs.org/' })
+  assert.deepEqual(E.catalogWithReleases(catalog, answer).plugins.map(p => p.version), catalog.plugins.map(p => p.version))
+  assert.equal(E.releasesComplete(catalog, answer), false)
+})
+await t('mirror fallback remains labelled and never certifies all versions on the official registry', () => {
+  const answer = releaseAnswer()
+  assert.equal(E.releasesComplete(catalog, answer), true)
+  answer.plugins[0].degraded = true; answer.plugins[0].registry = 'https://registry.npmmirror.com/'
+  assert.equal(E.releasesComplete(catalog, answer), false)
+  assert.equal(E.catalogWithReleases(catalog, answer).plugins[0].registry, 'https://registry.npmmirror.com/')
+})
+await t('built-in release differences are visible separately and excluded from external install plans', () => {
+  const bundles = [{ name: VD, version: '0.2.4', installed: false, removable: false }, { name: MV, version: '0.1.2', installed: true }]
+  assert.deepEqual(E.appReleaseUpdates(catalog, bundles).map(u => u.entry.id), [VD])
+  assert.deepEqual(E.pendingUpdates(catalog, bundles).map(u => u.entry.id), [MV])
+})
+await t('installing a verified live release passes its exact version and registry through inspect and install', async () => {
+  const answer = releaseAnswer(); answer.plugins.find(p => p.name === MV).version = '0.1.9'
+  const entry = E.catalogWithReleases(catalog, answer).plugins.find(p => p.id === MV)
+  const pm = createFakePm()
+  const result = await E.installOne(pm, entry, { installed: false }, { registry: entry.registry })
+  assert.equal(result.status, 'done')
+  assert.equal(pm.calls.find(c => c[0] === 'inspect')[1], MV + '@0.1.9')
+  assert.equal(pm.calls.find(c => c[0] === 'installBundle')[1], MV + '@0.1.9')
+  assert.equal(pm.calls.find(c => c[0] === 'installBundle')[2].registry, 'https://registry.npmjs.org/')
+})
+await t('a validated online listing adds a new VibeDev plugin without changing the client snapshot', () => {
+  const online = structuredClone(catalog)
+  const future = { ...structuredClone(by(VD)), id: '@vibedev-si/future-tool', npm: '@vibedev-si/future-tool',
+    version: '0.1.0', cmd: 'dsh plugin add @vibedev-si/future-tool', requires: [], partners: [], legacyNames: [],
+    name: { zh: '未来工具', en: 'Future tool' },
+    links: { repo: 'https://github.com/VibeDev-Si/future-tool', npm: 'https://www.npmjs.com/package/@vibedev-si/future-tool' },
+  }
+  online.plugins.push(future)
+  const answer = releaseAnswer(); answer.catalog = online
+  answer.plugins.push({ name: future.npm, ok: true, version: '0.1.1', publishedAt: future.publishedAt, registry: 'https://registry.npmjs.org/' })
+  const merged = E.catalogWithReleases(catalog, answer)
+  const plan = E.resolvePlan(merged, [future.id])
+  assert.equal(catalog.plugins.some(p => p.id === future.id), false)
+  assert.equal(plan[0].id, future.id)
+  assert.equal(plan[0].onlineOnly, true)
+  assert.equal(plan[0].usesLiveVersion, true)
+  assert.equal(E.specOf(plan[0]), future.npm + '@0.1.1')
+  assert.equal(plan[0].cmd, 'dsh plugin add ' + future.npm + '@0.1.1')
+  assert.equal(E.releasesComplete(merged, answer), true)
+})
+await t('invalid online listing cannot add arbitrary packages and falls back to the bundled snapshot', () => {
+  const online = structuredClone(catalog)
+  online.plugins[0].npm = '@deepseek-ai/fake-official'; online.plugins[0].id = online.plugins[0].npm
+  const answer = releaseAnswer(); answer.catalog = online
+  assert.deepEqual(E.catalogWithReleases(catalog, answer).plugins.map(p => p.npm), catalog.plugins.map(p => p.npm))
+})
 console.log(`\n${n} engine tests passed`)

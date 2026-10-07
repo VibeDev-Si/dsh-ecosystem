@@ -64,11 +64,14 @@ try {
   {
     const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
     const t = await text(page)
-    ok('first screen explains what this is', t.includes('VibeDev 团队出品的插件'))
+    // The "what is this" panel is collapsed by default (0.1.7): the first screen has to offer the way to it.
+    ok('the first screen keeps the explanation collapsed, with "关于" to open it', !t.includes('VibeDev 团队出品的插件') && t.includes('关于 VibeDev 生态'))
+    await clickText(page, '关于 VibeDev 生态'); await sleep(120)
+    ok('...and clicking it explains what this is', (await text(page)).includes('VibeDev 团队出品的插件'))
     ok('shows 3 official cards + 2 companions', (await page.evaluate(() => document.querySelectorAll('.card').length)) === 5)
     ok('suite says it will install 3 (sidebar already there)', t.includes('将安装 3 个插件（已装 1 个）'))
     ok('account + billing is visible on the card', t.includes('需要 VibeDev 账号') && t.includes('按用量计费'))
-    ok('community plugins are labelled as such', (await page.evaluate(() => [...document.querySelectorAll('.card[data-id=dshmarket] .tag')].map((x) => x.textContent))).includes('社区插件'))
+    ok('community plugins are labelled as such', (await page.evaluate(() => [...document.querySelectorAll('.card[data-id=dshmarket] .tag')].map((x) => x.textContent))).includes('DSH 社区市场插件'))
     await shot(page, '01-home'); await page.close()
   }
 
@@ -164,8 +167,8 @@ try {
   {
     const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }], delay: 350 })
     await clickText(page, '一键安装套装'); await page.waitForSelector('[data-testid=confirm]'); await click(page, '[data-testid=confirm]')
-    await waitText(page, '正在安装'); await sleep(500)
-    await click(page, '[data-testid=cancel]')
+    await page.waitForFunction(() => window.__pm.calls.some(c => c[0] === 'inspect') && document.querySelector('[data-testid=cancel]:not([disabled])'), { timeout: 10000 })
+    await click(page, '[data-testid=cancel]:not([disabled])')
     await page.waitForFunction(() => /安装未完成|安装完成/.test(document.body.innerText), { timeout: 15000 })
     const has = await page.evaluate(() => [...window.__pm.bundles.keys()])
     ok('cancel stops before the later plugins', !has.includes('@vibedev-si/dsh-media-viewer') && !has.includes('dsh-film'), has.join())
@@ -336,7 +339,7 @@ try {
   {
     const { page } = await boot({ locale: 'en', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
     const t = await text(page)
-    ok('English UI uses the catalog English text', t.includes('VibeDev Plugin Center') && t.includes('Install the suite') && t.includes('Needs a VibeDev account') && !/[\u4e00-\u9fff]/.test(t), (t.match(/[\u4e00-\u9fff]+/g) || []).slice(0, 5).join('|'))
+    ok('English UI uses the catalog English text', t.includes('VibeDev Ecosystem') && t.includes('Install the suite') && t.includes('Needs a VibeDev account') && !/[\u4e00-\u9fff]/.test(t), (t.match(/[\u4e00-\u9fff]+/g) || []).slice(0, 5).join('|'))
     await shot(page, '20-english'); await page.close()
   }
   {
@@ -348,7 +351,7 @@ try {
     // The real getLocale() is { active, locales } (the bench now returns that shape). A Chinese user must get Chinese.
     const { page } = await boot({ locale: 'zh', initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
     const t = await text(page)
-    ok('REAL locale shape: a zh user gets the Chinese UI (it rendered English in the real GUI)', t.includes('VibeDev 插件中心') && t.includes('一键安装套装') && !t.includes('Install the suite'))
+    ok('REAL locale shape: a zh user gets the Chinese UI (it rendered English in the real GUI)', t.includes('VibeDev 生态') && t.includes('一键安装套装') && !t.includes('Install the suite'))
     await page.evaluate(() => window.__setLocale('en')); await sleep(200)
     ok('switching language while the panel is open re-renders it', (await text(page)).includes('Install the suite') && !(await text(page)).includes('一键安装套装'))
     await page.evaluate(() => window.__setLocale('zh')); await sleep(200)
@@ -405,9 +408,9 @@ try {
   {
     const { page } = await boot({ locale: 'zh' })
     const label = await page.evaluate(() => window.__reg.slots.filter((s) => s.decl && s.decl.name === 'sidebar.panellist')[0].decl.label())
-    ok('sidebar entry is labelled "VibeDev 插件中心", not a bare "VibeDev" that hides next to the brand name', label === 'VibeDev 插件中心', label)
+    ok('sidebar entry is labelled "VibeDev 生态" (the panel is the ecosystem, not only a plugin centre), not a bare "VibeDev" that hides next to the brand name', label === 'VibeDev 生态', label)
     await page.evaluate(() => window.__setLocale('en'))
-    ok('the sidebar label follows the language', (await page.evaluate(() => window.__reg.slots.filter((s) => s.decl && s.decl.name === 'sidebar.panellist')[0].decl.label())) === 'VibeDev Plugin Center')
+    ok('the sidebar label follows the language', (await page.evaluate(() => window.__reg.slots.filter((s) => s.decl && s.decl.name === 'sidebar.panellist')[0].decl.label())) === 'VibeDev Ecosystem')
     await page.close()
   }
   {
@@ -559,7 +562,8 @@ try {
     await page.close()
   }
 
-  // 19 ── "does the center itself have a newer version?": one read of npm, only when the user clicks
+  // 19 ── "does the center itself have a newer version?": the panel reads the allow-list once when it mounts,
+    // and again only when the user clicks. Never on a timer, and concurrent clicks share one batch.
   const SELF = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).version
   const bumpPatch = (v, d) => { const [a, b, c] = v.split('.').map(Number); return a + '.' + b + '.' + (c + d) }
   const NEWER = bumpPatch(SELF, 1)
@@ -567,16 +571,16 @@ try {
   const selfBanner = (page) => page.evaluate(() => { const el = document.querySelector('[data-testid=self-update]'); return el ? { kind: el.dataset.kind, text: el.innerText } : null })
   const checkNow = async (page) => { await click(page, '[data-testid=check-update]'); await page.waitForFunction(() => { const el = document.querySelector('[data-testid=self-update]'); return el && el.dataset.kind !== 'checking' }, { timeout: 8000 }) }
   {
-    benchState.latest = { ok: true, latest: NEWER, publishedAt: OLD_PUB, sources: [] }; benchState.latestHits = 0; benchState.latestDelay = 0
+    benchState.latest = { ok: true, latest: NEWER, publishedAt: OLD_PUB, sources: [] }; benchState.latestHits = 0; benchState.latestDelay = 0; benchState.updatesHits = 0; benchState.updatesDelay = 0
     const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
     await sleep(3200)
-    ok('PRIVACY: just opening the center makes NO version request (nothing on load, nothing on a timer)', benchState.latestHits === 0, 'hits=' + benchState.latestHits)
+    ok('PRIVACY: opening the panel makes exactly ONE batch of version reads (the four allow-listed packages), and nothing on a timer', benchState.updatesHits === 1, 'hits=' + benchState.updatesHits)
     ok('the header shows which version of the center is running', (await page.evaluate(() => document.querySelector('[data-testid=version]')?.textContent)) === 'v' + SELF)
     ok('there is a "检查更新" button', (await page.evaluate(() => document.querySelector('[data-testid=check-update]')?.textContent)) === '检查更新')
     await page.close()
   }
   {
-    benchState.latest = { ok: true, latest: NEWER, publishedAt: OLD_PUB, sources: [] }; benchState.latestHits = 0
+    benchState.latest = { ok: true, latest: NEWER, publishedAt: OLD_PUB, sources: [] }; benchState.latestHits = 0; benchState.updatesHits = 0
     const { page } = await boot({ initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
     await page.evaluate(() => { window.__copied = null; window.__opened = null; Object.defineProperty(navigator, 'clipboard', { value: { writeText: (x) => { window.__copied = x; return Promise.resolve() } }, configurable: true }); window.open = (u) => { window.__opened = u } })
     await checkNow(page)
@@ -594,7 +598,7 @@ try {
     await click(page, '.vdc [data-testid=self-update] .x'); await sleep(100)
     ok('the × dismisses the banner', (await selfBanner(page)) === null)
     await checkNow(page)
-    ok('checking again asks again (one request per click, nothing in between)', benchState.latestHits === 2, 'hits=' + benchState.latestHits)
+    ok('checking again asks again (the mount read plus one per deliberate click, nothing in between)', benchState.updatesHits === 3, 'hits=' + benchState.updatesHits)
     await page.close()
   }
   {
@@ -683,7 +687,7 @@ try {
     const inside = await mk(2)
     const endText = await inside.evaluate((p) => new Date(Date.parse(p) + 24 * 3600 * 1000).toLocaleString(), pub)
     const note = await inside.evaluate(() => document.querySelector('[data-testid=cooldown-note]')?.innerText || null)
-    ok('update confirm inside the cooldown: names the plugin and version, explains the duplicate-rule risk, gives the end time', !!note && note.includes('媒体预览与画廊 0.1.1') && note.includes('同名') && note.includes('可能被拦住') && note.includes(endText), note)
+    ok('update confirm inside the cooldown: names the plugin and version, explains the duplicate-rule risk, gives the end time', !!note && note.includes('媒体预览与画廊 ' + ver(VIEWER)) && note.includes('同名') && note.includes('可能被拦住') && note.includes(endText), note)
     ok('the old, inaccurate sentence is gone', !(await text(inside)).includes('会按确切版本安装'))
     await shot(inside, '29-update-confirm-cooldown'); await inside.close()
     const outside = await mk(25)
@@ -766,7 +770,10 @@ try {
     ok('built-in account remains visible with the new package name and its actual supplied version', card.includes('VibeDev 账号与模型') && card.includes('@vibedev-si/dsh-vibedev · 0.2.0'))
     ok('built-in enabled through default layers is labelled enabled and has no duplicate install or management button', card.includes('应用内置 · 已启用') && await page.$eval(accountCard, (el) => !el.querySelector('.btn.primary, .btn.idle')))
     ok('suite counts the built-in account as already present', (await text(page)).includes('将安装 2 个插件（已装 2 个）'))
-    ok('built-in versions are not offered as separate npm updates', !(await page.evaluate(() => !!document.querySelector('[data-tab=updates] .n'))))
+    ok('built-in versions are not offered as separate npm updates', !(await page.evaluate(() => !!document.querySelector('.grid .card[data-id="@vibedev-si/dsh-vibedev"] .btn.warn'))))
+    await click(page, '[data-tab=updates]')
+    const builtInRow = await page.evaluate(() => { const rows = [...document.querySelectorAll('[data-testid=app-update-row]')]; return { rows: rows.length, buttons: rows.reduce((n, el) => n + el.querySelectorAll('button').length, 0), text: rows[0]?.innerText ?? '' } })
+    ok('the app-supplied account is offered as an app update only, with nothing to install', builtInRow.rows === 1 && builtInRow.buttons === 0 && builtInRow.text.includes('升级应用'), JSON.stringify({ rows: builtInRow.rows, buttons: builtInRow.buttons }))
     await click(page, '[data-tab=installed]')
     ok('Installed tab includes the built-in account', await page.$eval(accountCard, (el) => el.innerText.includes('应用内置')))
     await click(page, accountCard)

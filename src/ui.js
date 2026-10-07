@@ -9,6 +9,122 @@
 import * as E from './engine.js'
 import { STR, L, pick, fmtSize } from './strings.js'
 
+/** The white/black '#fff'/'#000' the engine picks, as an rgb() string its ratio helper accepts. */
+const rgbOfHex = (hex) => (hex === '#000' ? 'rgb(0,0,0)' : 'rgb(255,255,255)')
+
+/** The alpha of a computed colour: 'rgb(...)' is opaque, 'rgba(...)' and 'transparent' are not. */
+export function alphaOfColor(color) {
+  const s = String(color ?? '').trim()
+  if (s === 'transparent' || s === '') return 0
+  const m = /rgba?\(([^)]+)\)/.exec(s)
+  if (!m) return 0
+  const parts = m[1].split(',').map((x) => x.trim())
+  return parts.length < 4 ? 1 : Number(parts[3])
+}
+
+/**
+ * Which controls inside the embedded market cannot be read as they are, and what to paint them.
+ * Pure: the caller passes what the browser computed for each candidate. Only an opaque filled
+ * button with text, that is neither a toggle nor disabled and whose own colours fall short of
+ * 4.5, is bridged — to whichever of black/white reads better on ITS OWN background. Nothing
+ * transparent, textless, toggled or disabled is touched, and no background is changed.
+ * @param rows - one row per candidate: { key, text, color, background, backgroundImage, toggle, disabled }.
+ * @returns one fix per candidate that needs one, with the ratio it had and the ratio it gets.
+ */
+export function marketTextFixes(rows) {
+  const out = []
+  for (const row of rows ?? []) {
+    if (!row || !row.text || row.toggle || row.disabled) continue
+    if (row.backgroundImage && row.backgroundImage !== 'none') continue
+    if (!(alphaOfColor(row.background) >= 1)) continue
+    const ratio = E.contrastRatio(row.color, row.background)
+    if (ratio === undefined || ratio >= 4.5) continue
+    const color = E.readableTextOn(row.background)
+    const improved = E.contrastRatio(rgbOfHex(color), row.background)
+    if (improved === undefined || improved <= ratio) continue
+    out.push({ key: row.key, color, ratio, improved })
+  }
+  return out
+}
+
+/** The two colours the bridge may paint, as the attribute value that selects them in the CSS block. */
+const TEXT_ATTR = 'data-vdc-text'
+
+export function startMarketTextBridge(getRoot) {
+  const marked = new Set()
+  let queued = false
+  let disposed = false
+  const scan = () => {
+    queued = false
+    if (disposed) return
+    const root = getRoot()
+    if (!root) return
+    const els = Array.from(root.querySelectorAll('button'))
+    // Judge the market's own colours, never the ones this bridge painted last time: measuring our
+    // own override would make the decision oscillate (mark -> readable -> unmark -> unreadable).
+    for (const el of marked) el.removeAttribute(TEXT_ATTR)
+    marked.clear()
+    const rows = els.map((el, i) => {
+      const cs = getComputedStyle(el)
+      return {
+        key: String(i), text: (el.textContent || '').trim().length > 0,
+        color: cs.color, background: cs.backgroundColor, backgroundImage: cs.backgroundImage,
+        toggle: el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked') || el.getAttribute('role') === 'switch' || el.getAttribute('role') === 'checkbox',
+        disabled: el.disabled === true,
+      }
+    })
+    for (const fix of marketTextFixes(rows)) {
+      const el = els[Number(fix.key)]
+      if (!el) continue
+      el.setAttribute(TEXT_ATTR, fix.color === '#000' ? 'dark' : 'light')
+      marked.add(el)
+    }
+  }
+  const schedule = () => { if (disposed || queued) return; queued = true; Promise.resolve().then(scan) }
+  scan()
+  const mo = typeof MutationObserver === 'function' ? new MutationObserver((records) => {
+    // Writing the mark is what a scan does, so a record about it must never schedule another pass.
+    if (records.length && records.every((r) => r.attributeName === TEXT_ATTR)) return
+    schedule()
+  }) : null
+  if (mo) {
+    mo.observe(document.documentElement, { attributes: true })
+    if (document.body) mo.observe(document.body, { attributes: true })
+    const root = getRoot()
+    // The market mounts late and swaps what it shows, often without changing its box: watch its
+    // own nodes and its controls' state, never our mark (filtered out, and guarded above).
+    if (root) mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'disabled', 'aria-pressed', 'aria-checked'] })
+  }
+  // One deferred pass, for content already laid out when the observers attached.
+  const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(schedule) : null
+  // Only what happens inside the market matters: a document-wide pointer stream would scan the
+  // whole subtree on every mouse move over the panel.
+  const onPointer = (event) => {
+    const root = getRoot()
+    if (root && event.target instanceof Node && root.contains(event.target)) schedule()
+  }
+  const root0 = getRoot()
+  if (root0) {
+    root0.addEventListener('pointerover', onPointer, true)
+    root0.addEventListener('pointerout', onPointer, true)
+    root0.addEventListener('focusin', onPointer, true)
+    root0.addEventListener('focusout', onPointer, true)
+  }
+  return () => {
+    disposed = true
+    if (mo) mo.disconnect()
+    if (raf !== null) cancelAnimationFrame(raf)
+    if (root0) {
+      root0.removeEventListener('pointerover', onPointer, true)
+      root0.removeEventListener('pointerout', onPointer, true)
+      root0.removeEventListener('focusin', onPointer, true)
+      root0.removeEventListener('focusout', onPointer, true)
+    }
+    for (const el of marked) el.removeAttribute(TEXT_ATTR)
+    marked.clear()
+  }
+}
+
 export function createCenter(React, catalog, host) {
   const h = React.createElement
   const { useState, useEffect, useRef, useCallback, useMemo } = React
@@ -20,83 +136,159 @@ export function createCenter(React, catalog, host) {
   let LANG = 'zh' // set at the top of every render; icon glyphs are letters in English, characters in Chinese
 
   /* ── style ─────────────────────────────────────────────────────────────── */
-  const CSS = `
-.vdc{--bg:var(--dsw-alias-bg-base,#fff);--l1:var(--dsw-alias-bg-layer-1,#f6f7f9);--l2:var(--dsw-alias-bg-layer-2,#eceef3);--ov:var(--dsw-alias-bg-overlay,#fff);
+  const CSS = `.vdc{--bg:var(--dsw-alias-bg-base,#fff);--l1:var(--dsw-alias-bg-layer-1,#f6f7f9);--l2:var(--dsw-alias-bg-layer-2,#eceef3);--ov:var(--dsw-alias-bg-overlay,#fff);
 --b1:var(--dsw-alias-border-l1,rgba(20,24,40,.09));--b2:var(--dsw-alias-border-l2,rgba(20,24,40,.18));--brand:var(--dsw-alias-brand-primary,#4d6bfe);
 --t1:var(--dsw-alias-label-primary,#1b1d24);--t2:var(--dsw-alias-label-secondary,#6c7080);--ok:var(--dsw-alias-state-success-primary,#1f9d62);
 --warn:var(--dsw-alias-state-warn-primary,#c98a00);--err:var(--dsw-alias-state-error-primary,#d9363e);--idle:var(--dsw-alias-state-idle-primary,#9aa0ad);
 position:relative;display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg);color:var(--t1);font:14px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
-.vdc *{box-sizing:border-box}.vdc button{font:inherit;color:inherit;cursor:pointer}.vdc svg{flex:none}
-.vdc .top{display:flex;align-items:center;gap:18px;padding:12px 24px;border-bottom:1px solid var(--b1);background:var(--bg);flex:none;flex-wrap:wrap}
-.vdc .brand{display:flex;align-items:center;gap:10px}.vdc .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#4d6bfe,#8f6bff);display:grid;place-items:center;color:#fff}
-.vdc h1{font-size:16px;margin:0;font-weight:650}.vdc .pill{font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--b2);color:var(--t2)}
-.vdc .tabs{display:flex;gap:4px}.vdc .tab{border:0;background:transparent;padding:6px 12px;border-radius:8px;color:var(--t2);font-weight:550}
-.vdc .tab:hover{background:var(--l1)}.vdc .tab.on{background:var(--l2);color:var(--t1)}.vdc .tab .n{margin-left:5px;font-size:11px;padding:0 6px;border-radius:99px;background:var(--brand);color:var(--on-brand,#fff)}
-.vdc .sp{flex:1}.vdc .ghost{border:1px solid var(--b2);background:transparent;border-radius:8px;padding:6px 12px}.vdc .ghost:hover{background:var(--l1)}
-.vdc .scroll{flex:1;overflow:auto;min-height:0}.vdc .wrap{max-width:1060px;margin:0 auto;padding:20px 24px 56px}
-.vdc .banner{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;border:1px solid color-mix(in srgb,var(--warn) 45%,var(--b1));background:color-mix(in srgb,var(--warn) 9%,var(--bg));margin-bottom:16px}
-.vdc .banner .grow{flex:1}.vdc .banner small{display:block;color:var(--t2);margin-top:2px}
-.vdc .intro{border:1px solid var(--b1);border-radius:16px;padding:18px 20px;background:linear-gradient(135deg,color-mix(in srgb,var(--brand) 8%,var(--bg)),var(--bg) 60%);margin-bottom:16px}
-.vdc .intro h2{margin:0 0 4px;font-size:18px}.vdc .intro .lead{margin:0 0 14px;color:var(--t2)}
-.vdc .three{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
-.vdc .fact{background:var(--bg);border:1px solid var(--b1);border-radius:12px;padding:12px 14px}.vdc .fact b{display:block;margin-bottom:2px}.vdc .fact span{color:var(--t2);font-size:13px}
-.vdc .ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:color-mix(in srgb,var(--brand) 14%,transparent);color:var(--brand);margin-bottom:8px}
-.vdc .not{margin-top:12px;font-size:13px;color:var(--t2)}.vdc .lnk{color:var(--brand);font-weight:600;cursor:pointer;background:none;border:0;padding:0}
-.vdc .suite{border:1px solid var(--b2);border-radius:16px;padding:16px 18px;margin-bottom:20px;background:var(--l1);display:grid;grid-template-columns:1fr auto;gap:12px 20px;align-items:center}
-.vdc .suite h3{margin:0;font-size:16px;display:flex;align-items:center;gap:8px}.vdc .suite p{margin:2px 0 0;color:var(--t2)}.vdc .suite .r{text-align:right}.vdc .suite .r small{display:block;color:var(--t2);margin-top:6px;font-size:12px}
-.vdc .chips{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}.vdc .chip{display:flex;align-items:center;gap:7px;padding:5px 10px 5px 6px;border-radius:99px;background:var(--bg);border:1px solid var(--b1);font-size:13px}
-.vdc .chip .st{width:7px;height:7px;border-radius:50%;background:var(--idle)}.vdc .chip.done .st{background:var(--ok)}.vdc .arrow{color:var(--idle)}
-.vdc .btn{border:1px solid var(--b2);background:var(--bg);padding:7px 14px;border-radius:9px;font-weight:600;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.vdc .btn:hover{background:var(--l1)}.vdc .btn.primary{background:var(--brand);border-color:var(--brand);color:var(--on-brand,#fff)}.vdc .btn.primary:hover{filter:brightness(1.08)}
-.vdc .btn.big{padding:10px 20px}.vdc .btn.sm{padding:5px 9px}.vdc .btn[disabled]{opacity:.5;cursor:default}
-.vdc .btn.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--b1));background:color-mix(in srgb,var(--ok) 8%,var(--bg));pointer-events:none}
-.vdc .btn.warn{background:color-mix(in srgb,var(--warn) 14%,var(--bg));border-color:color-mix(in srgb,var(--warn) 50%,var(--b1));color:var(--warn)}.vdc .btn.idle{color:var(--t2)}
-.vdc .sec{display:flex;align-items:baseline;gap:10px;margin:6px 0 12px;flex-wrap:wrap}.vdc .sec h3{margin:0;font-size:15px}.vdc .sec span{color:var(--t2);font-size:13px}
-.vdc .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:22px}
-.vdc .card{border:1px solid var(--b1);border-radius:14px;padding:16px;background:var(--bg);display:flex;flex-direction:column;gap:10px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
-.vdc .card:hover{border-color:var(--b2);box-shadow:0 4px 18px rgba(0,0,0,.06)}.vdc .card .hd{display:flex;gap:12px;align-items:center}
-.vdc .gl{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:18px;flex:none}
-.vdc .nm{font-weight:650;font-size:15px}.vdc .sub{color:var(--t2);font-size:12px;word-break:break-all}.vdc .tg{flex:1;font-size:13px}
-.vdc .tags{display:flex;flex-wrap:wrap;gap:6px}.vdc .tag{font-size:11px;padding:1px 8px;border-radius:99px;background:var(--l2);color:var(--t2);white-space:nowrap}
-.vdc .tag.off{background:color-mix(in srgb,var(--brand) 14%,transparent);color:var(--brand);font-weight:600}.vdc .tag.acct{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
-.vdc .tag.role{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok);font-weight:600}
-.vdc .rels{display:flex;flex-direction:column;gap:6px}.vdc .rel{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.vdc .rel .rn{font-weight:500}.vdc .rel .rs{color:var(--t2);font-size:13px}.vdc .rel .lnk{margin-left:auto}
-.vdc .ft{display:flex;align-items:center;gap:10px;position:relative}.vdc .ft .meta{flex:1;color:var(--t2);font-size:12px}.vdc .acts{display:flex;gap:6px;align-items:center;position:relative}
-.vdc .dep{font-size:12px;color:var(--t2);display:flex;gap:6px;align-items:center}.vdc .dep.miss{color:var(--warn)}
-.vdc .menu{position:absolute;right:0;bottom:calc(100% + 6px);min-width:150px;background:var(--ov);border:1px solid var(--b2);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:4px;z-index:6}
-.vdc .menu button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:7px 10px;border-radius:7px;font-size:13px}.vdc .menu button:hover{background:var(--l1)}.vdc .menu .danger{color:var(--err)}
-.vdc .mask{position:absolute;inset:0;background:rgba(0,0,0,.35);z-index:20}
-.vdc .drawer{position:absolute;top:0;right:0;bottom:0;width:440px;max-width:94%;background:var(--ov);border-left:1px solid var(--b2);z-index:21;display:flex;flex-direction:column}
-.vdc .dh{padding:18px 20px 12px;border-bottom:1px solid var(--b1)}.vdc .dh .row{display:flex;gap:12px;align-items:center}.vdc .dh h2{margin:0;font-size:17px}
-.vdc .x{margin-left:auto;border:0;background:transparent;font-size:20px;color:var(--t2);width:30px;height:30px;border-radius:8px}.vdc .x:hover{background:var(--l1)}
-.vdc .db{flex:1;overflow:auto;padding:14px 20px 24px}.vdc .db h4{margin:18px 0 6px;font-size:12px;letter-spacing:.5px;color:var(--t2);text-transform:uppercase}
-.vdc .db ul{margin:0;padding-left:18px}.vdc .db li{margin:3px 0}.vdc .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px}.vdc .kv dt{color:var(--t2)}.vdc .kv dd{margin:0}
-.vdc .cap{display:flex;gap:10px;padding:8px 10px;border:1px solid var(--b1);border-radius:10px;margin-bottom:6px;font-size:13px}.vdc .cap b{min-width:78px;white-space:nowrap}.vdc .cap span{color:var(--t2)}
-.vdc pre.cmd{margin:6px 0;padding:8px 10px;border-radius:8px;background:var(--l1);border:1px solid var(--b1);font:12px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
-.vdc .links button{color:var(--brand);margin-right:14px;font-size:13px;background:none;border:0;padding:0}
-.vdc .dfoot{padding:12px 20px;border-top:1px solid var(--b1);display:flex;gap:10px;align-items:center}.vdc .dfoot .grow{flex:1;color:var(--t2);font-size:12px}
-.vdc .mask2{z-index:30}.vdc .modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:600px;max-width:94%;max-height:92%;background:var(--ov);border:1px solid var(--b2);border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.28);z-index:31;display:flex;flex-direction:column}
-.vdc .mh{padding:18px 22px 6px}.vdc .mh h2{margin:0;font-size:17px}.vdc .mh p{margin:2px 0 0;color:var(--t2);font-size:13px}.vdc .mb{padding:10px 22px;overflow:auto}
-.vdc .mf{padding:14px 22px 18px;display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap}.vdc .mf .grow{flex:1;color:var(--t2);font-size:12px}
-.vdc .row3{display:flex;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--b1);border-radius:12px;margin-bottom:8px}.vdc .row3 .gl{width:32px;height:32px;font-size:14px;border-radius:9px}
-.vdc .row3 .m{flex:1;min-width:0}.vdc .row3 .m div{font-size:12px;color:var(--t2)}.vdc .row3.skip{opacity:.6}
-.vdc .stat{font-size:12px;color:var(--t2);display:flex;align-items:center;gap:6px;white-space:nowrap}.vdc .spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--b2);border-top-color:var(--brand);animation:vdcsp .8s linear infinite}
-@keyframes vdcsp{to{transform:rotate(360deg)}}
-.vdc .dotc{width:14px;height:14px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:10px}.vdc .dotc.ok{background:var(--ok)}.vdc .dotc.err{background:var(--err)}.vdc .dotc.wait{background:var(--idle);opacity:.5}.vdc .dotc.hold{background:var(--warn)}
-.vdc .bar{height:6px;border-radius:99px;background:var(--l2);overflow:hidden;margin:6px 0 12px}.vdc .bar i{display:block;height:100%;background:var(--brand);border-radius:99px;transition:width .3s}
-.vdc .note{font-size:12px;color:var(--t2);margin:8px 0}.vdc .res{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;margin:6px 0 10px}
-.vdc .res.ok{background:color-mix(in srgb,var(--ok) 10%,var(--bg));border:1px solid color-mix(in srgb,var(--ok) 35%,var(--b1))}
-.vdc .res.err{background:color-mix(in srgb,var(--err) 9%,var(--bg));border:1px solid color-mix(in srgb,var(--err) 35%,var(--b1))}
-.vdc .res.warn{background:color-mix(in srgb,var(--warn) 10%,var(--bg));border:1px solid color-mix(in srgb,var(--warn) 40%,var(--b1))}
-.vdc .res b{display:block}.vdc .res span{color:var(--t2);font-size:13px}.vdc details{margin:6px 0;font-size:13px}.vdc summary{cursor:pointer;color:var(--t2)}
-.vdc .log{margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--l1);border:1px solid var(--b1);font:11.5px/1.55 ui-monospace,Consolas,monospace;color:var(--t2);max-height:120px;overflow:auto;white-space:pre-wrap}
-.vdc .next{margin-top:8px;padding:10px 12px;border-radius:10px;background:var(--l1);font-size:13px}.vdc .next li{margin:2px 0}
-.vdc .foot{margin-top:6px;padding-top:16px;border-top:1px solid var(--b1);display:flex;gap:18px;color:var(--t2);font-size:13px;flex-wrap:wrap}
-.vdc .empty{max-width:560px;margin:56px auto;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px}.vdc .empty .gl{width:56px;height:56px;border-radius:16px;font-size:24px}
-.vdc .empty h2{margin:6px 0 0;font-size:20px}.vdc .empty p{margin:0 0 6px;color:var(--t2)}
-.vdc .embed{border:1px solid var(--b1);border-radius:16px;overflow:hidden}.vdc .embed-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--b1);background:var(--l1)}
-.vdc code{font:12px ui-monospace,Consolas,monospace;background:var(--l2);padding:0 5px;border-radius:5px}
-`
+.vdc :not(:where([data-vdc-market], [data-vdc-market] *)){box-sizing:border-box}
+.vdc button:not(:where([data-vdc-market], [data-vdc-market] *)){font:inherit;color:inherit;cursor:pointer}
+[data-vdc-market] button[data-vdc-text="light"]{color:#fff}
+[data-vdc-market] button[data-vdc-text="dark"]{color:#000}
+.vdc svg:not(:where([data-vdc-market], [data-vdc-market] *)){flex:none}
+.vdc .top:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;align-items:center;gap:18px;padding:12px 24px;border-bottom:1px solid var(--b1);background:var(--bg);flex:none;flex-wrap:wrap}
+.vdc .brand:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;align-items:center;gap:10px}
+.vdc .logo:not(:where([data-vdc-market], [data-vdc-market] *)){width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#4d6bfe,#8f6bff);display:grid;place-items:center;color:#fff}
+.vdc h1:not(:where([data-vdc-market], [data-vdc-market] *)){font-size:16px;margin:0;font-weight:650}
+.vdc .pill:not(:where([data-vdc-market], [data-vdc-market] *)){font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--b2);color:var(--t2)}
+.vdc .tabs:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;gap:4px}
+.vdc .tab:not(:where([data-vdc-market], [data-vdc-market] *)){border:0;background:transparent;padding:6px 12px;border-radius:8px;color:var(--t2);font-weight:550}
+.vdc .tab:hover:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--l1)}
+.vdc .tab.on:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--l2);color:var(--t1)}
+.vdc .tab .n:not(:where([data-vdc-market], [data-vdc-market] *)){margin-left:5px;font-size:11px;padding:0 6px;border-radius:99px;background:var(--brand);color:var(--on-brand,#fff)}
+.vdc .sp:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1}
+.vdc .ghost:not(:where([data-vdc-market], [data-vdc-market] *)){border:1px solid var(--b2);background:transparent;border-radius:8px;padding:6px 12px}
+.vdc .ghost:hover:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--l1)}
+.vdc .scroll:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1;overflow:auto;min-height:0}
+.vdc .wrap:not(:where([data-vdc-market], [data-vdc-market] *)){max-width:1060px;margin:0 auto;padding:20px 24px 56px}
+.vdc .banner:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;border:1px solid color-mix(in srgb,var(--warn) 45%,var(--b1));background:color-mix(in srgb,var(--warn) 9%,var(--bg));margin-bottom:16px}
+.vdc .banner .grow:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1}
+.vdc .banner small:not(:where([data-vdc-market], [data-vdc-market] *)){display:block;color:var(--t2);margin-top:2px}
+.vdc .intro:not(:where([data-vdc-market], [data-vdc-market] *)){border:1px solid var(--b1);border-radius:16px;padding:18px 20px;background:linear-gradient(135deg,color-mix(in srgb,var(--brand) 8%,var(--bg)),var(--bg) 60%);margin-bottom:16px}
+.vdc .intro h2:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0 0 4px;font-size:18px}
+.vdc .intro .lead:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0 0 14px;color:var(--t2)}
+.vdc .three:not(:where([data-vdc-market], [data-vdc-market] *)){display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.vdc .fact:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--bg);border:1px solid var(--b1);border-radius:12px;padding:12px 14px}
+.vdc .fact b:not(:where([data-vdc-market], [data-vdc-market] *)){display:block;margin-bottom:2px}
+.vdc .fact span:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2);font-size:13px}
+.vdc .ic:not(:where([data-vdc-market], [data-vdc-market] *)){width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:color-mix(in srgb,var(--brand) 14%,transparent);color:var(--brand);margin-bottom:8px}
+.vdc .not:not(:where([data-vdc-market], [data-vdc-market] *)){margin-top:12px;font-size:13px;color:var(--t2)}
+.vdc .lnk:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--brand);font-weight:600;cursor:pointer;background:none;border:0;padding:0}
+.vdc .suite:not(:where([data-vdc-market], [data-vdc-market] *)){border:1px solid var(--b2);border-radius:16px;padding:16px 18px;margin-bottom:20px;background:var(--l1);display:grid;grid-template-columns:1fr auto;gap:12px 20px;align-items:center}
+.vdc .suite h3:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0;font-size:16px;display:flex;align-items:center;gap:8px}
+.vdc .suite p:not(:where([data-vdc-market], [data-vdc-market] *)){margin:2px 0 0;color:var(--t2)}
+.vdc .suite .r:not(:where([data-vdc-market], [data-vdc-market] *)){text-align:right}
+.vdc .suite .r small:not(:where([data-vdc-market], [data-vdc-market] *)){display:block;color:var(--t2);margin-top:6px;font-size:12px}
+.vdc .chips:not(:where([data-vdc-market], [data-vdc-market] *)){grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.vdc .chip:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;align-items:center;gap:7px;padding:5px 10px 5px 6px;border-radius:99px;background:var(--bg);border:1px solid var(--b1);font-size:13px}
+.vdc .chip .st:not(:where([data-vdc-market], [data-vdc-market] *)){width:7px;height:7px;border-radius:50%;background:var(--idle)}
+.vdc .chip.done .st:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--ok)}
+.vdc .arrow:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--idle)}
+.vdc .btn:not(:where([data-vdc-market], [data-vdc-market] *)){border:1px solid var(--b2);background:var(--bg);padding:7px 14px;border-radius:9px;font-weight:600;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.vdc .btn:hover:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--l1)}
+.vdc .btn.primary:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--brand);border-color:var(--brand);color:var(--on-brand,#fff)}
+.vdc .btn.primary:hover:not(:where([data-vdc-market], [data-vdc-market] *)){filter:brightness(1.08)}
+.vdc .btn.big:not(:where([data-vdc-market], [data-vdc-market] *)){padding:10px 20px}
+.vdc .btn.sm:not(:where([data-vdc-market], [data-vdc-market] *)){padding:5px 9px}
+.vdc .btn[disabled]:not(:where([data-vdc-market], [data-vdc-market] *)){opacity:.5;cursor:default}
+.vdc .btn.ok:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--b1));background:color-mix(in srgb,var(--ok) 8%,var(--bg));pointer-events:none}
+.vdc .btn.warn:not(:where([data-vdc-market], [data-vdc-market] *)){background:color-mix(in srgb,var(--warn) 14%,var(--bg));border-color:color-mix(in srgb,var(--warn) 50%,var(--b1));color:var(--warn)}
+.vdc .btn.idle:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2)}
+.vdc .sec:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;align-items:baseline;gap:10px;margin:6px 0 12px;flex-wrap:wrap}
+.vdc .sec h3:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0;font-size:15px}
+.vdc .sec span:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2);font-size:13px}
+.vdc .grid:not(:where([data-vdc-market], [data-vdc-market] *)){display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:22px}
+.vdc .card:not(:where([data-vdc-market], [data-vdc-market] *)){border:1px solid var(--b1);border-radius:14px;padding:16px;background:var(--bg);display:flex;flex-direction:column;gap:10px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.vdc .card:hover:not(:where([data-vdc-market], [data-vdc-market] *)){border-color:var(--b2);box-shadow:0 4px 18px rgba(0,0,0,.06)}
+.vdc .card .hd:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;gap:12px;align-items:center}
+.vdc .gl:not(:where([data-vdc-market], [data-vdc-market] *)){width:42px;height:42px;border-radius:12px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:18px;flex:none}
+.vdc .nm:not(:where([data-vdc-market], [data-vdc-market] *)){font-weight:650;font-size:15px}
+.vdc .sub:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2);font-size:12px;word-break:break-all}
+.vdc .tg:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1;font-size:13px}
+.vdc .tags:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;flex-wrap:wrap;gap:6px}
+.vdc .tag:not(:where([data-vdc-market], [data-vdc-market] *)){font-size:11px;padding:1px 8px;border-radius:99px;background:var(--l2);color:var(--t2);white-space:nowrap}
+.vdc .tag.off:not(:where([data-vdc-market], [data-vdc-market] *)){background:color-mix(in srgb,var(--brand) 14%,transparent);color:var(--brand);font-weight:600}
+.vdc .tag.acct:not(:where([data-vdc-market], [data-vdc-market] *)){background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.vdc .tag.role:not(:where([data-vdc-market], [data-vdc-market] *)){background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok);font-weight:600}
+.vdc .rels:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;flex-direction:column;gap:6px}
+.vdc .rel:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.vdc .rel .rn:not(:where([data-vdc-market], [data-vdc-market] *)){font-weight:500}
+.vdc .rel .rs:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2);font-size:13px}
+.vdc .rel .lnk:not(:where([data-vdc-market], [data-vdc-market] *)){margin-left:auto}
+.vdc .ft:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;align-items:center;gap:10px;position:relative}
+.vdc .ft .meta:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1;color:var(--t2);font-size:12px}
+.vdc .acts:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;gap:6px;align-items:center;position:relative}
+.vdc .dep:not(:where([data-vdc-market], [data-vdc-market] *)){font-size:12px;color:var(--t2);display:flex;gap:6px;align-items:center}
+.vdc .dep.miss:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--warn)}
+.vdc .menu:not(:where([data-vdc-market], [data-vdc-market] *)){position:absolute;right:0;bottom:calc(100% + 6px);min-width:150px;background:var(--ov);border:1px solid var(--b2);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:4px;z-index:6}
+.vdc .menu button:not(:where([data-vdc-market], [data-vdc-market] *)){display:block;width:100%;text-align:left;border:0;background:transparent;padding:7px 10px;border-radius:7px;font-size:13px}
+.vdc .menu button:hover:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--l1)}
+.vdc .menu .danger:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--err)}
+.vdc .mask:not(:where([data-vdc-market], [data-vdc-market] *)){position:absolute;inset:0;background:rgba(0,0,0,.35);z-index:20}
+.vdc .drawer:not(:where([data-vdc-market], [data-vdc-market] *)){position:absolute;top:0;right:0;bottom:0;width:440px;max-width:94%;background:var(--ov);border-left:1px solid var(--b2);z-index:21;display:flex;flex-direction:column}
+.vdc .dh:not(:where([data-vdc-market], [data-vdc-market] *)){padding:18px 20px 12px;border-bottom:1px solid var(--b1)}
+.vdc .dh .row:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;gap:12px;align-items:center}
+.vdc .dh h2:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0;font-size:17px}
+.vdc .x:not(:where([data-vdc-market], [data-vdc-market] *)){margin-left:auto;border:0;background:transparent;font-size:20px;color:var(--t2);width:30px;height:30px;border-radius:8px}
+.vdc .x:hover:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--l1)}
+.vdc .db:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1;overflow:auto;padding:14px 20px 24px}
+.vdc .db h4:not(:where([data-vdc-market], [data-vdc-market] *)){margin:18px 0 6px;font-size:12px;letter-spacing:.5px;color:var(--t2);text-transform:uppercase}
+.vdc .db ul:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0;padding-left:18px}
+.vdc .db li:not(:where([data-vdc-market], [data-vdc-market] *)){margin:3px 0}
+.vdc .kv:not(:where([data-vdc-market], [data-vdc-market] *)){display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px}
+.vdc .kv dt:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2)}
+.vdc .kv dd:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0}
+.vdc .cap:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;gap:10px;padding:8px 10px;border:1px solid var(--b1);border-radius:10px;margin-bottom:6px;font-size:13px}
+.vdc .cap b:not(:where([data-vdc-market], [data-vdc-market] *)){min-width:78px;white-space:nowrap}
+.vdc .cap span:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2)}
+.vdc pre.cmd:not(:where([data-vdc-market], [data-vdc-market] *)){margin:6px 0;padding:8px 10px;border-radius:8px;background:var(--l1);border:1px solid var(--b1);font:12px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+.vdc .links button:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--brand);margin-right:14px;font-size:13px;background:none;border:0;padding:0}
+.vdc .dfoot:not(:where([data-vdc-market], [data-vdc-market] *)){padding:12px 20px;border-top:1px solid var(--b1);display:flex;gap:10px;align-items:center}
+.vdc .dfoot .grow:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1;color:var(--t2);font-size:12px}
+.vdc .mask2:not(:where([data-vdc-market], [data-vdc-market] *)){z-index:30}
+.vdc .modal:not(:where([data-vdc-market], [data-vdc-market] *)){position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:600px;max-width:94%;max-height:92%;background:var(--ov);border:1px solid var(--b2);border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.28);z-index:31;display:flex;flex-direction:column}
+.vdc .mh:not(:where([data-vdc-market], [data-vdc-market] *)){padding:18px 22px 6px}
+.vdc .mh h2:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0;font-size:17px}
+.vdc .mh p:not(:where([data-vdc-market], [data-vdc-market] *)){margin:2px 0 0;color:var(--t2);font-size:13px}
+.vdc .mb:not(:where([data-vdc-market], [data-vdc-market] *)){padding:10px 22px;overflow:auto}
+.vdc .mf:not(:where([data-vdc-market], [data-vdc-market] *)){padding:14px 22px 18px;display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap}
+.vdc .mf .grow:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1;color:var(--t2);font-size:12px}
+.vdc .row3:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--b1);border-radius:12px;margin-bottom:8px}
+.vdc .row3 .gl:not(:where([data-vdc-market], [data-vdc-market] *)){width:32px;height:32px;font-size:14px;border-radius:9px}
+.vdc .row3 .m:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1;min-width:0}
+.vdc .row3 .m div:not(:where([data-vdc-market], [data-vdc-market] *)){font-size:12px;color:var(--t2)}
+.vdc .row3.skip:not(:where([data-vdc-market], [data-vdc-market] *)){opacity:.6}
+.vdc .stat:not(:where([data-vdc-market], [data-vdc-market] *)){font-size:12px;color:var(--t2);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.vdc .spin:not(:where([data-vdc-market], [data-vdc-market] *)){width:14px;height:14px;border-radius:50%;border:2px solid var(--b2);border-top-color:var(--brand);animation:vdcsp .8s linear infinite}
+@keyframes vdcsp{to{transform:rotate(360deg)}
+}
+.vdc .dotc:not(:where([data-vdc-market], [data-vdc-market] *)){width:14px;height:14px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:10px}
+.vdc .dotc.ok:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--ok)}
+.vdc .dotc.err:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--err)}
+.vdc .dotc.wait:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--idle);opacity:.5}
+.vdc .dotc.hold:not(:where([data-vdc-market], [data-vdc-market] *)){background:var(--warn)}
+.vdc .bar:not(:where([data-vdc-market], [data-vdc-market] *)){height:6px;border-radius:99px;background:var(--l2);overflow:hidden;margin:6px 0 12px}
+.vdc .bar i:not(:where([data-vdc-market], [data-vdc-market] *)){display:block;height:100%;background:var(--brand);border-radius:99px;transition:width .3s}
+.vdc .note:not(:where([data-vdc-market], [data-vdc-market] *)){font-size:12px;color:var(--t2);margin:8px 0}
+.vdc .res:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;margin:6px 0 10px}
+.vdc .res.ok:not(:where([data-vdc-market], [data-vdc-market] *)){background:color-mix(in srgb,var(--ok) 10%,var(--bg));border:1px solid color-mix(in srgb,var(--ok) 35%,var(--b1))}
+.vdc .res.err:not(:where([data-vdc-market], [data-vdc-market] *)){background:color-mix(in srgb,var(--err) 9%,var(--bg));border:1px solid color-mix(in srgb,var(--err) 35%,var(--b1))}
+.vdc .res.warn:not(:where([data-vdc-market], [data-vdc-market] *)){background:color-mix(in srgb,var(--warn) 10%,var(--bg));border:1px solid color-mix(in srgb,var(--warn) 40%,var(--b1))}
+.vdc .res b:not(:where([data-vdc-market], [data-vdc-market] *)){display:block}
+.vdc .res span:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2);font-size:13px}
+.vdc details:not(:where([data-vdc-market], [data-vdc-market] *)){margin:6px 0;font-size:13px}
+.vdc summary:not(:where([data-vdc-market], [data-vdc-market] *)){cursor:pointer;color:var(--t2)}
+.vdc .log:not(:where([data-vdc-market], [data-vdc-market] *)){margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--l1);border:1px solid var(--b1);font:11.5px/1.55 ui-monospace,Consolas,monospace;color:var(--t2);max-height:120px;overflow:auto;white-space:pre-wrap}
+.vdc .next:not(:where([data-vdc-market], [data-vdc-market] *)){margin-top:8px;padding:10px 12px;border-radius:10px;background:var(--l1);font-size:13px}
+.vdc .next li:not(:where([data-vdc-market], [data-vdc-market] *)){margin:2px 0}
+.vdc .foot:not(:where([data-vdc-market], [data-vdc-market] *)){margin-top:6px;padding-top:16px;border-top:1px solid var(--b1);display:flex;gap:18px;color:var(--t2);font-size:13px;flex-wrap:wrap}
+.vdc .empty:not(:where([data-vdc-market], [data-vdc-market] *)){max-width:560px;margin:56px auto;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px}
+.vdc .empty .gl:not(:where([data-vdc-market], [data-vdc-market] *)){width:56px;height:56px;border-radius:16px;font-size:24px}
+.vdc .empty h2:not(:where([data-vdc-market], [data-vdc-market] *)){margin:6px 0 0;font-size:20px}
+.vdc .empty p:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0 0 6px;color:var(--t2)}
+.vdc .embed:not(:where([data-vdc-market], [data-vdc-market] *)){border:1px solid var(--b1);border-radius:16px;overflow:hidden}
+.vdc .embed-h:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--b1);background:var(--l1)}
+.vdc code:not(:where([data-vdc-market], [data-vdc-market] *)){font:12px ui-monospace,Consolas,monospace;background:var(--l2);padding:0 5px;border-radius:5px}`
 
   /* ── icons ─────────────────────────────────────────────────────────────── */
   const svg = (w, kids, extra) => h('svg', Object.assign({ width: w, height: w, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }, extra || {}), kids)
@@ -127,6 +319,32 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 
   /* ── component ─────────────────────────────────────────────────────────── */
   function Center() {
+    const [releaseState, setReleaseState] = useState({ kind: 'idle', answer: null })
+    const releaseRequest = useRef(null)
+    const releaseLifetime = useRef(null)
+    const liveCatalog = useMemo(() => E.catalogWithReleases(catalog, releaseState.answer), [releaseState.answer])
+    const PLUGINS = liveCatalog.plugins
+    const byId = (id) => PLUGINS.find((p) => p.id === id)
+    const loadReleases = useCallback(async () => {
+      if (releaseRequest.current) return releaseRequest.current
+      if (!host.checkUpdates) { setReleaseState({ kind: 'unavailable', answer: null }); return undefined }
+      setReleaseState((previous) => ({ ...previous, kind: 'checking' }))
+      const signal = releaseLifetime.current?.signal
+      const task = Promise.resolve().then(() => host.checkUpdates(signal)).catch(() => undefined)
+        .then((answer) => {
+          if (!signal?.aborted) setReleaseState((previous) => ({ kind: answer?.ok ? 'ready' : 'unavailable',
+            answer: answer && (Array.isArray(answer.plugins) || answer.self) ? answer : previous.answer }))
+          return answer
+        }).finally(() => { releaseRequest.current = null })
+      releaseRequest.current = task
+      return task
+    }, [])
+    useEffect(() => {
+      const lifetime = new AbortController()
+      releaseLifetime.current = lifetime
+      void loadReleases()
+      return () => { lifetime.abort(); releaseLifetime.current = null }
+    }, [loadReleases])
     const lang = pick(host.locale?.())
     LANG = lang
     const S = STR[lang]
@@ -151,8 +369,16 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const timer = setInterval(apply, 1500) // themes that swap a stylesheet change no attribute
       return () => { mo && mo.disconnect(); clearInterval(timer) }
     }, [])
+    // The market's own filled buttons can be unreadable on a light brand (white on #6f87ff, or on
+    // anything near white): bridge only those, and put every colour back when the view or theme changes.
+    const marketRef = useRef(null)
     const [bundles, setBundles] = useState(null) // null = loading, false = unavailable
     const [view, setView] = useState('all')
+    useEffect(() => {
+      if (view !== 'community') return undefined
+      return startMarketTextBridge(() => marketRef.current)
+    }, [view, bundles])
+
     const [intro, setIntro] = useState(false)
     const [drawer, setDrawer] = useState(null)
     const [menu, setMenu] = useState(null)
@@ -178,13 +404,16 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     useEffect(() => { refresh(); return host.onChanged?.(refresh) }, [refresh])
 
     const have = useMemo(() => new Map((bundles || []).filter(E.bundlePresent).map((b) => [b.name, b])), [bundles])
-    const isIn = (p) => have.has(p.npm)
-    const isOn = (p) => !!have.get(p.npm)?.enabled
-    const isProvided = (p) => E.providedByApp(have.get(p.npm))
+    const isIn = (p) => !!p && have.has(p.npm)
+    const isOn = (p) => !!p && !!have.get(p.npm)?.enabled
+    const isProvided = (p) => !!p && E.providedByApp(have.get(p.npm))
     const shownVersion = (p) => isProvided(p) ? have.get(p.npm)?.version ?? p.version : p.version
     const missingDeps = (p) => (p.requires || []).filter((d) => !isIn(byId(d)) || isProvided(byId(d)) && !isOn(byId(d)))
-    const updates = useMemo(() => (bundles ? E.pendingUpdates(catalog, bundles) : []), [bundles])
-    const legacy = useMemo(() => (bundles ? E.legacyInstalled(catalog, bundles).filter((x) => !x.newInstalled || true) : []), [bundles])
+    const updates = useMemo(() => (bundles ? E.pendingUpdates(liveCatalog, bundles) : []), [bundles, liveCatalog])
+    const appUpdates = useMemo(() => (bundles ? E.appReleaseUpdates(liveCatalog, bundles) : []), [bundles, liveCatalog])
+    const selfRelease = E.judgeSelfUpdate(host.version?.() ?? '0.0.0', releaseState.answer?.self)
+    const fullyChecked = releaseState.kind === 'ready' && E.releasesComplete(liveCatalog, releaseState.answer)
+    const legacy = useMemo(() => (bundles ? E.legacyInstalled(liveCatalog, bundles) : []), [bundles, liveCatalog])
 
     const official = PLUGINS.filter((p) => p.origin === 'official')
     const companions = PLUGINS.filter((p) => p.role === 'dependency' || p.role === 'companion')
@@ -213,8 +442,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const openInstall = (ids, title, opts = {}) => {
       setDrawer(null); setMenu(null)
       const rows = opts.update
-        ? ids.map((id) => ({ entry: byId(id), installed: true, enabled: true, update: updates.find((u) => u.entry.id === id) }))
-        : E.markInstalled(E.resolvePlan(catalog, ids), bundles || [])
+        ? E.markInstalled(ids.map(byId), bundles || []).map((row) => ({ ...row, update: updates.find((u) => u.entry.id === row.entry.id) }))
+        : E.markInstalled(E.resolvePlan(liveCatalog, ids), bundles || [])
       setModal({ mode: 'confirm', rows, title, update: !!opts.update })
     }
     const start = async (rows, title, update, approved) => {
@@ -238,10 +467,10 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         if (!first) { run.waiting = true; upd(); await E.waitQuiet(host.onChanged, between); run.waiting = false }
         first = false
         run.cur = row; row.st = 'run'; row.sub = S.stInspect; upd()
-        const state = update ? { installed: true, enabled: row.enabled } : row
+        const state = update ? { installed: true, enabled: row.enabled, provided: row.provided } : row
         const r = await E.installOne(host.pm, row.entry, state, {
           update,
-          registry,
+          registry: update || row.entry.usesLiveVersion ? row.entry.registry ?? registry : registry,
           approvedBuilds: run.approved[row.entry.id],
           hooks: {
             onStep: (s) => {
@@ -293,7 +522,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     // "Is there a newer center?": one read of npm, made by the host half, only when the user clicks.
     const checkSelf = async () => {
       setSelfUpd({ kind: 'checking' })
-      const answer = await (host.checkLatest ? host.checkLatest() : Promise.resolve(undefined))
+      const answer = host.checkUpdates ? (await loadReleases())?.self
+        : await (host.checkLatest ? host.checkLatest() : Promise.resolve(undefined))
       setSelfUpd(E.judgeSelfUpdate(host.version?.() ?? '0.0.0', answer))
     }
     const SELF_PKG = '@vibedev-si/dsh-ecosystem'
@@ -332,8 +562,9 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
 
     const Suite = () => {
-      const s = catalog.suites[0]
-      const items = s.items.map(byId)
+      const s = (liveCatalog.suites ?? [])[0]
+      if (!s) return null
+      const items = (s.items ?? []).map(byId).filter(Boolean)
       const todo = items.filter((p) => !isIn(p) || !isOn(p) || isProvided(p) && legacy.some((x) => x.entry.id === p.id))
       const filmish = todo.some((p) => p.sizeKB > 10000)
       const chips = []
@@ -387,7 +618,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         h('div', { className: 'fact' }, h('div', { className: 'ic' }, I.bolt()), h('b', null, S.f2t), h('span', null, S.f2d)),
         h('div', { className: 'fact' }, h('div', { className: 'ic' }, I.star()), h('b', null, S.f3t), h('span', null, S.f3d))),
       h('div', { className: 'not' }, I.arrow(), ' ', S.introMarketNo,
-        h('button', { className: 'lnk', onClick: () => (marketIn ? setView('community') : openInstall([MARKET], `${S.install} ${L(byId(MARKET).name, lang)}`)) }, marketIn ? S.openMarket : S.installMarket)))
+        h('button', { className: 'lnk', disabled: !byId(MARKET), onClick: () => (marketIn ? setView('community') : byId(MARKET) && openInstall([MARKET], `${S.install} ${L(byId(MARKET).name, lang)}`)) }, marketIn ? S.openMarket : S.installMarket)))
 
     const Banner = () => legacy.map((x) => h('div', { className: 'banner', key: x.legacy, 'data-testid': 'migrate-banner' }, I.warn(),
       h('div', { className: 'grow' }, h('b', null, S.migrateTitle(x.legacy)), ' ', S.migrateBody(x.legacy, x.entry.npm), h('small', null, x.provided ? S.providedMigration : S.migrateOrder)),
@@ -395,25 +626,44 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 
     const Community = () => {
       const p = byId(MARKET)
+      if (!p) return h('div', { className: 'note', 'data-testid': 'market-unlisted' }, S.communityUnlisted)
       if (!marketIn) return h('div', { className: 'empty' }, Glyph(p), h('h2', null, S.communityEmptyT), h('p', null, S.communityEmptyB),
         h('button', { className: 'btn primary big', disabled: !host.pm, onClick: () => openInstall([MARKET], `${S.install} ${L(p.name, lang)}`) }, I.down(), ' ', S.installMarket), h('div', { className: 'note' }, S.communityNote))
       const embedded = host.renderMarket?.()
       return h('div', { className: 'embed' },
         h('div', { className: 'embed-h' }, h('b', null, S.tabCommunity), h('span', { className: 'pill' }, S.communityViaMarket), h('span', { className: 'sp' }), h('button', { className: 'btn sm', onClick: () => setDrawer(MARKET) }, S.communityAbout)),
-        h('div', { style: { padding: 16 } }, embedded || h('div', { className: 'note', 'data-testid': 'no-embed' }, S.communityNoEmbed)))
+        h('div', { 'data-vdc-market': '', ref: marketRef, style: { padding: 16 } }, embedded || h('div', { className: 'note', 'data-testid': 'no-embed' }, S.communityNoEmbed)))
     }
 
+    const ReleaseRows = () => [
+      selfRelease.kind === 'newer' && h('article', { className: 'card', key: 'self', 'data-testid': 'self-update-row' },
+        h('h3', null, S.title), h('div', { className: 'sub' }, `${SELF_PKG} · ${host.version?.() ?? ''} → ${selfRelease.latest}`),
+        h('p', null, S.selfRowHelp), h('code', { 'data-testid': 'self-update-spec' }, `${SELF_PKG}@${selfRelease.latest}`),
+        h('div', { className: 'cfoot' }, h('button', { className: 'btn', 'data-testid': 'copy-self-update',
+          onClick: () => host.copy?.(`${SELF_PKG}@${selfRelease.latest}`) }, S.copyPkg))),
+      ...appUpdates.map((u) => h('article', { className: 'card', key: 'app-' + u.entry.id, 'data-testid': 'app-update-row', 'data-app': u.entry.id },
+        h('h3', null, L(u.entry.name, lang)), h('div', { className: 'sub' }, `${u.from} → ${u.to}`),
+        h('p', null, S.appUpdateHelp), h('span', { className: 'tag' }, S.provided))),
+    ].filter(Boolean)
     const Main = () => {
       if (view === 'community') return Community()
       let list = official
       if (view === 'installed') list = official.filter(isIn)
       if (view === 'updates') list = updates.map((u) => u.entry)
+      const extra = view === 'updates' ? ReleaseRows() : []
+      const checked = fullyChecked && Array.isArray(bundles)
+      const status = releaseState.kind === 'checking' || releaseState.kind === 'idle' ? S.releaseChecking
+        : checked ? S.releaseChecked : S.releaseUnavailable
       return [
         view === 'all' && intro && h(Intro, { key: 'i' }),
         view === 'all' && h(Suite, { key: 's' }),
         h('div', { className: 'sec', key: 'h' }, h('h3', null, S.official), h('span', null, S.officialSub(official.length))),
-        list.length ? h('div', { className: 'grid', key: 'g' }, list.map(Card))
-          : h('div', { className: 'note', key: 'n', style: { padding: '30px 0', textAlign: 'center' } }, view === 'updates' ? S.allUpToDate : S.nothingInstalled),
+        view === 'updates' && h('div', { className: 'note', key: 'status', 'data-testid': 'release-status',
+          'data-state': releaseState.kind === 'checking' || releaseState.kind === 'idle' ? 'checking' : checked ? 'verified' : 'unavailable' },
+          status, ' ', h('button', { className: 'lnk', disabled: releaseState.kind === 'checking', onClick: checkSelf }, S.checkUpdate)),
+        list.length || extra.length ? h('div', { className: 'grid', key: 'g' }, [...list.map(Card), ...extra])
+          : h('div', { className: 'note', key: 'n', style: { padding: '30px 0', textAlign: 'center' } },
+            view === 'updates' ? (checked ? S.allUpToDate : S.releaseNoVerifiedUpdates) : S.nothingInstalled),
         view === 'all' && [
           h('div', { className: 'sec', key: 'dh' }, h('h3', null, S.deps), h('span', null, S.depsSub)),
           h('div', { className: 'grid', key: 'dg' }, companions.map(Card)),
@@ -596,7 +846,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 
     const modalBody = !modal ? null : modal.mode === 'confirm' ? Confirm() : modal.mode === 'run' ? Run() : modal.mode === 'result' ? Result() : modal.mode === 'migrate' ? Migrate() : UninstallResult()
 
-    const counts = { inst: official.filter(isIn).length, upd: updates.length }
+    const counts = { inst: official.filter(isIn).length, upd: updates.length + appUpdates.length + (selfRelease.kind === 'newer' ? 1 : 0) }
     return h('div', { className: 'vdc', ref: rootRef, 'data-testid': 'center', onClick: () => menu && setMenu(null) },
       h('style', null, CSS),
       h('header', { className: 'top' },
@@ -606,8 +856,10 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       h('div', { className: 'scroll' }, h('div', { className: 'wrap' },
         bundles === false && h('div', { className: 'banner', 'data-testid': 'no-manager' }, I.warn(), h('div', { className: 'grow' }, h('b', null, S.loadFail), h('small', null, host.pm ? S.loadFailB : S.noManager))),
         NoRefresh(), Banner(), SelfUpdate(), Main(),
-        h('div', { className: 'foot' }, h('span', null, S.footMore, h('button', { className: 'lnk', onClick: () => (marketIn ? setView('community') : openInstall([MARKET], `${S.install} ${L(byId(MARKET).name, lang)}`)) }, marketIn ? S.openMarket.replace(' →', '') : S.installMarket.replace(' →', ''))),
-          h('span', null, S.footFeedback, ' ', h('button', { className: 'lnk', onClick: () => host.openUrl?.('https://github.com/VibeDev-Si/dsh-ecosystem/issues') }, 'VibeDev-Si · GitHub')), h('span', null, S.footCatalog(catalog.updated))))),
+        h('div', { className: 'foot' }, h('span', null, S.footMore, h('button', { className: 'lnk', disabled: !byId(MARKET), onClick: () => (marketIn ? setView('community') : byId(MARKET) && openInstall([MARKET], `${S.install} ${L(byId(MARKET).name, lang)}`)) }, marketIn ? S.openMarket.replace(' →', '') : S.installMarket.replace(' →', ''))),
+          h('span', null, S.footFeedback, ' ', h('button', { className: 'lnk', onClick: () => host.openUrl?.('https://github.com/VibeDev-Si/dsh-ecosystem/issues') }, 'VibeDev-Si · GitHub')), h('span', null, S.footCatalog(liveCatalog.updated,
+            releaseState.answer?.catalog && !liveCatalog.listingAccepted ? 'bundled' : releaseState.answer?.catalogSource,
+            releaseState.answer?.catalog && !liveCatalog.listingAccepted ? 'catalog refused' : releaseState.answer?.catalogError))))),
       Drawer(),
       modal && [h('div', { className: 'mask mask2', key: 'mk' }), h('section', { className: 'modal', key: 'md', 'data-mode': modal.mode }, modalBody)])
   }

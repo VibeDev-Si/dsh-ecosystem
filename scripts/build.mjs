@@ -26,6 +26,7 @@ function strip(src) {
   return { code, exportsFound }
 }
 
+const validator = strip(read('catalog-validator.js'))
 const engine = strip(read('src/engine.js'))
 const strings = strip(read('src/strings.js'))
 const ui = strip(read('src/ui.js'))
@@ -39,6 +40,7 @@ const catalog = JSON.stringify(JSON.parse(read('catalog/catalog.json')))
 const body = `
 "use strict";
 var React = require("react");
+${validator.code}
 ${engine.code}
 ${engineNs}
 ${strings.code}
@@ -89,6 +91,18 @@ function apply(ctx) {
         .then(function (r) { return r.ok ? r.json() : undefined; })
         .catch(function () { return undefined; })
         .then(function (v) { if (timer) clearTimeout(timer); return v; });
+    },
+    // Read the four fixed VibeDev releases when this panel opens or the user checks again. The host caches successes.
+    checkUpdates: function (signal) {
+      var ctl = new AbortController();
+      var abort = function () { ctl.abort(); };
+      if (signal && signal.aborted) return Promise.resolve(undefined);
+      if (signal) signal.addEventListener('abort', abort, { once: true });
+      var timer = setTimeout(abort, 35000);
+      return fetch('/vdc/updates', { cache: 'no-store', signal: ctl.signal })
+        .then(function (r) { return r.ok ? r.json() : undefined; })
+        .catch(function () { return undefined; })
+        .finally(function () { clearTimeout(timer); if (signal) signal.removeEventListener('abort', abort); });
     },
     renderMarket: function () { try { var m = ctx.reflect && ctx.reflect.get && ctx.reflect.get("market"); return m && m.render ? m.render() : null; } catch (e) { return null; } }
   });

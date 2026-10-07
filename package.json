@@ -1,12 +1,16 @@
 {
   "name": "@vibedev-si/dsh-ecosystem",
-  "version": "0.1.7",
-  "description": "VibeDev 插件中心：集中了解、一键安装和管理 VibeDev 官方插件，支持套装、旧包名迁移，并可一键安装社区插件市场 · VibeDev Plugin Center: learn about, one-click install and manage the official VibeDev plugins, with suites, legacy-package migration, and a one-click install of the community plugin market",
+  "version": "0.1.8",
+  "description": "VibeDev 生态：发现、安装和管理 VibeDev 出品的插件，实时核对正式版本更新，并可浏览 DSH 社区市场 · VibeDev Ecosystem: discover and manage plugins made by VibeDev, verify stable release updates, and browse the DSH community market",
   "type": "module",
   "main": "index.js",
   "icon": "./icon.svg",
   "files": [
     "index.js",
+    "catalog-updates.js",
+    "catalog-validator.js",
+    "remote-catalog.js",
+    "catalog/catalog.json",
     "client.js",
     "icon.svg",
     "locale",
@@ -33,8 +37,8 @@
     "build": "node scripts/build.mjs",
     "validate": "node scripts/validate-catalog.mjs",
     "validate:online": "node scripts/validate-catalog.mjs --online",
-    "test": "node scripts/build.mjs && node scripts/validate-catalog.mjs && node test/catalog.test.mjs && node test/engine.test.mjs && node test/host.test.mjs && node test/latest.test.mjs",
-    "test:browser": "node scripts/build.mjs && node test/browser.test.mjs",
+    "test": "node scripts/build.mjs && node scripts/validate-catalog.mjs && node test/catalog.test.mjs && node test/engine.test.mjs && node test/host.test.mjs && node test/latest.test.mjs && node test/updates.test.mjs && node test/remote-catalog.test.mjs",
+    "test:browser": "node scripts/build.mjs && node test/browser.test.mjs && node test/theme.browser.test.mjs && node test/updates.browser.test.mjs && node test/online-catalog.browser.test.mjs",
     "prepack": "node scripts/build.mjs"
   },
   "dsh": {

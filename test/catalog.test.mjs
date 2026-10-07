@@ -12,6 +12,8 @@ function run(mutate) {
   const dir = mkdtempSync(join(tmpdir(), 'cat-'))
   mkdirSync(join(dir, 'catalog')); mkdirSync(join(dir, 'scripts'))
   cpSync(join(root, 'scripts', 'validate-catalog.mjs'), join(dir, 'scripts', 'validate-catalog.mjs'))
+  cpSync(join(root, 'catalog-validator.js'), join(dir, 'catalog-validator.js'))
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ type: 'module' }))
   const c = structuredClone(good); mutate(c)
   writeFileSync(join(dir, 'catalog', 'catalog.json'), JSON.stringify(c))
   const r = spawnSync(process.execPath, [join(dir, 'scripts', 'validate-catalog.mjs')], { encoding: 'utf8' })

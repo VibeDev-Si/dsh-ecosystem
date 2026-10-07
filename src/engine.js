@@ -18,6 +18,8 @@
  *   - inspect() must answer with the same name and version we asked for.
  */
 
+import { validateCatalog } from '../catalog-validator.js'
+
 /** Plain, exact install spec for one catalog entry. */
 export function specOf(entry) {
   return `${entry.npm}@${entry.version}`
@@ -428,6 +430,51 @@ export function pendingUpdates(catalog, bundles) {
     if (v && compareSemver(v, p.version) < 0) out.push({ entry: p, from: v, to: p.version })
   }
   return out
+}
+
+/** Read a validated online listing without widening the allowed namespaces or silently installing it. */
+export function catalogWithReleases(catalog, answer) {
+  const listingAccepted = !!answer?.catalog && validateCatalog(answer.catalog).ok
+  const listing = listingAccepted ? answer.catalog : catalog
+  const bundled = new Map(catalog.plugins.map(p => [p.npm, p]))
+  const releases = new Map((Array.isArray(answer?.plugins) ? answer.plugins : [])
+    .filter((r) => r?.ok === true && typeof r.name === 'string' && /^\d+\.\d+\.\d+$/.test(r.version ?? '')
+      && typeof r.publishedAt === 'string' && Number.isFinite(Date.parse(r.publishedAt))
+      && ['https://registry.npmjs.org/', 'https://registry.npmmirror.com/'].includes(r.registry))
+    .map((r) => [r.name, r]))
+  return { ...listing, listingAccepted, plugins: listing.plugins.map((entry) => {
+    const p = bundled.has(entry.npm) ? entry : { ...entry, onlineOnly: true }
+    const r = releases.get(p.npm)
+    if (p.origin !== 'official' || p.updates !== 'center' || !r || compareSemver(r.version, p.version) < 0) return p
+    return { ...p, version: r.version, publishedAt: r.publishedAt, cmd: `dsh plugin add ${p.npm}@${r.version}`,
+      ...(Number.isFinite(r.sizeKB) && r.sizeKB > 0 ? { sizeKB: r.sizeKB } : {}),
+      ...(compareSemver(r.version, p.version) > 0 ? { reviewed: null } : {}),
+      registry: r.registry, releaseSource: r.registry,
+      usesLiveVersion: !bundled.has(p.npm) || compareSemver(r.version, bundled.get(p.npm).version) > 0 }
+  }) }
+}
+
+/** A completed check may claim current versions only when every fixed VibeDev package and self answered. */
+export function releasesComplete(catalog, answer) {
+  if (answer?.ok !== true || answer.self?.ok !== true || answer.self.registry !== 'https://registry.npmjs.org/'
+    || answer.self.degraded || !/^\d+\.\d+\.\d+$/.test(answer.self.latest ?? '')) return false
+  const releases = new Map((Array.isArray(answer.plugins) ? answer.plugins : []).map((r) => [r?.name, r]))
+  return catalog.plugins.filter((p) => p.origin === 'official' && p.updates === 'center').every((p) => {
+    const r = releases.get(p.npm)
+    return r?.ok === true && /^\d+\.\d+\.\d+$/.test(r.version ?? '')
+      && Number.isFinite(Date.parse(r.publishedAt))
+      && compareSemver(r.version, p.version) >= 0
+      && r.registry === 'https://registry.npmjs.org/' && !r.degraded
+  })
+}
+
+/** Keep app-supplied version differences visible, but never offer to install an external replacement. */
+export function appReleaseUpdates(catalog, bundles) {
+  const have = new Map((bundles ?? []).filter(providedByApp).map((b) => [b.name, b]))
+  return catalog.plugins.flatMap((p) => {
+    const b = have.get(p.npm)
+    return b?.version && compareSemver(b.version, p.version) < 0 ? [{ entry: p, from: b.version, to: p.version }] : []
+  })
 }
 
 export function compareSemver(a, b) {

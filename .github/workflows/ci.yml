@@ -59,7 +59,7 @@ jobs:
           npm pack --dry-run --json --ignore-scripts > pack.json
           node -e '
             const files = require("./pack.json")[0].files.map(f => f.path).sort();
-            const want = ["LICENSE","README.md","client.js","cordis.patch.yml","icon.svg","index.js","locale/en.json","locale/zh.json","package.json"];
+            const want = ["LICENSE","README.md","catalog-updates.js","catalog-validator.js","catalog/catalog.json","client.js","cordis.patch.yml","icon.svg","index.js","locale/en.json","locale/zh.json","package.json","remote-catalog.js"];
             if (JSON.stringify(files) !== JSON.stringify(want)) { console.error("unexpected tarball contents:", files); process.exit(1) }
             console.log("ok:", files.join(", "));
           '

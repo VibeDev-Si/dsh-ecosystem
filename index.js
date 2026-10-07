@@ -3,7 +3,8 @@
  *
  * The center talks to the host's `pluginManager` from the browser (via ctx.remote), so this half stays small. It exists
  * because the loader mounts a package through its host entry, for a developer-only self-check channel that is OFF unless
- * a marker file exists, and for ONE user-initiated read of this package's own latest version:
+ * a marker file exists, and for the TWO user-facing outbound reads: this package's own latest version, and the fixed
+ * allow-list of official plugins plus this center (`catalog-updates.js`).
  *
  *   GET  /vdc/ping        -> {ok:true}
  *   GET  /vdc/config      -> {selfcheck, mount}: does <profile>/.vdc/enable-selfcheck exist, and does enable-selfcheck-mount
@@ -11,13 +12,22 @@
  *   POST /vdc/selfcheck   -> writes the client's report to <profile>/.vdc/selfcheck.json  (only when enabled)
  *   GET  /vdc/latest      -> the newest version of THIS package on npm. Called only when the user clicks "check for
  *                            updates"; never on load, never on a timer.
+ *   GET  /vdc/updates     -> the newest version of each allow-listed package (three official plugins and this center),
+ *                            every one of them verified against its package identity, bundle manifest, repository and
+ *                            integrity. Never on load, never on a timer: the panel asks when it opens and when the
+ *                            user clicks.
  *
- * Every route is loopback-only (same Host/Origin fence as the other routes). The ONLY outbound network use is /vdc/latest:
- * a plain GET of the packument of this one package from one of two fixed registries. It takes no input from the page
- * (no query, no body), so there is nothing to redirect elsewhere; it sends no data about the user or the machine.
+ * Every route is loopback-only (same Host/Origin fence as the other routes). The ONLY outbound network use is those two
+ * reads: a plain GET of one packument per package, from fixed registries (the official one first, a mirror only when the
+ * official read fails at the transport level). Neither takes input from the page (no query, no body), so there is nothing
+ * to redirect elsewhere; they send no data about the user or the machine.
  */
 import { access, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createUpdatesReader } from './catalog-updates.js'
+import { createCatalogReader } from './remote-catalog.js'
+import { readFileSync } from 'node:fs'
+const BUNDLED_CATALOG = JSON.parse(readFileSync(new URL('./catalog/catalog.json', import.meta.url), 'utf8'))
 
 export const name = '@vibedev-si/dsh-ecosystem'
 export const inject = ['webServer', 'webRuntime']
@@ -89,6 +99,10 @@ export function apply(ctx) {
   // `ctx.__vdcFetch` is a test hook; the real host never sets it, so production uses the global fetch.
   const doFetch = (...a) => (ctx.__vdcFetch ?? globalThis.fetch)(...a)
   let cache // {at, body}: a user mashing the button must not hammer the registry
+  // The allow-listed live reader owns its own 60-second cache and its own in-flight batch.
+  const now = typeof ctx.__vdcNow === 'function' ? ctx.__vdcNow : Date.now
+  const catalogs = ctx.__vdcCatalogReader ?? createCatalogReader(doFetch, now, BUNDLED_CATALOG)
+  const updates = createUpdatesReader(doFetch, now, catalogs)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/vdc',
@@ -109,6 +123,7 @@ export function apply(ctx) {
           if (body.ok) cache = { at: Date.now(), body } // a failure is never cached: the next click tries again
           return json(200, body)
         }
+        if (url.pathname === '/vdc/updates' && req.method === 'GET') return json(200, await updates.read())
         if (url.pathname === '/vdc/selfcheck' && req.method === 'POST') {
           if (!(await exists(markerPath()))) return json(403, { ok: false, error: 'self-check is not enabled' })
           const chunks = []; let size = 0
