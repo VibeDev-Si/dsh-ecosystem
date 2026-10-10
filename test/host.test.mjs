@@ -75,5 +75,13 @@ await t('built into the app (row config official: true): the page learns it thro
   await new Promise((r) => s.listen(0, '127.0.0.1', r))
   try { assert.equal((await (await fetch(`http://127.0.0.1:${s.address().port}/vdc/config`)).json()).official, true) } finally { s.close() }
 })
+await t('needs only the web server: trusted hosts come from webStartup (DSH alpha.2+) or webRuntime (earlier), when present', async () => {
+  const { inject, trustedHostsOf } = await import('../index.js')
+  assert.deepEqual(inject, ['webServer'])
+  assert.deepEqual(trustedHostsOf({ get: (name) => (name === 'webStartup' ? { trustedHosts: ['app.lan:3180'] } : undefined) }), ['app.lan:3180'])
+  assert.deepEqual(trustedHostsOf({ get: (name) => (name === 'webRuntime' ? { trustedHosts: ['old.lan'] } : undefined) }), ['old.lan'])
+  assert.deepEqual(trustedHostsOf({ get: () => { throw new Error('cannot get property without inject') } }), [])
+  assert.deepEqual(trustedHostsOf({}), [])
+})
 server.close()
 console.log(`\n${n} host tests passed`)

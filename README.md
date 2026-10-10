@@ -2,6 +2,10 @@
 
 集中了解、安装和管理 **VibeDev 出品的插件**，并在独立的社区标签页里浏览 **DSH 社区市场（dshmarket）**。VibeDev 生态与 DSH 宿主的插件管理器是不同入口；安装、启停与卸载仍由宿主执行。
 
+## 0.1.10
+
+- 兼容 DSH 0.2.1-alpha.2 及以后：宿主把启动参数服务从 `webRuntime` 改名为 `webStartup`，0.1.9 及更早版本在新宿主上会停在「等待服务」而不加载。现在只依赖 Web 服务本身，额外的受信主机从两种服务中按宿主实际提供的读取。
+
 ## 0.1.9
 
 - **VibeDev Next 内置**：VibeDev Next 把 VibeDev 生态作为内置官方插件提供。它出现在「插件」页的「官方」分组里，点开即进入生态页面；版本随应用更新，在 VibeDev Next 里不需要也不能另外安装。
@@ -34,13 +38,13 @@ VibeDev Next 已内置 VibeDev 生态，无需安装；在 VibeDev Next 的「�
 在 DSH 的插件页按完整包名安装：
 
 ```text
-@vibedev-si/dsh-ecosystem@0.1.9
+@vibedev-si/dsh-ecosystem@0.1.10
 ```
 
 独立 DSH 的命令：
 
 ```sh
-dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.9
+dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.10
 ```
 
 - 安装前会列出精确版本与依赖，先检查、安装为停用状态，再启用。已安装的组件会复用；更新原本停用的插件会保持停用。

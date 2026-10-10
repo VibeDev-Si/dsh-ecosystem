@@ -31,7 +31,20 @@ import { readFileSync } from 'node:fs'
 const BUNDLED_CATALOG = JSON.parse(readFileSync(new URL('./catalog/catalog.json', import.meta.url), 'utf8'))
 
 export const name = '@vibedev-si/dsh-ecosystem'
-export const inject = ['webServer', 'webRuntime']
+// Only the web server is required. The extra trusted hosts come from `webStartup` (DSH 0.2.1-alpha.2 and later) or
+// `webRuntime` (earlier releases), read when present: requiring either one left the plugin pending on the other release.
+export const inject = ['webServer']
+
+/** The deployment's extra trusted hosts (loopback is always trusted), from whichever startup service this host has. */
+export function trustedHostsOf(ctx) {
+  for (const service of ['webStartup', 'webRuntime']) {
+    try {
+      const value = typeof ctx.get === 'function' ? ctx.get(service) : ctx[service]
+      if (Array.isArray(value?.trustedHosts)) return value.trustedHosts
+    } catch { /* not provided by this host */ }
+  }
+  return []
+}
 
 const header = (h, k) => (typeof h[k] === 'string' ? h[k] : undefined)
 const parseAuthority = (a) => { try { return new URL(`http://${a}`) } catch { return undefined } }
@@ -121,7 +134,7 @@ export function apply(ctx, config) {
     handler: async (req, res) => {
       const json = (status, body) => { const b = Buffer.from(JSON.stringify(body)); res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': String(b.length), 'cache-control': 'no-store' }); res.end(b) }
       try {
-        if (!trusted(req, ctx.webRuntime.trustedHosts)) return json(403, { ok: false })
+        if (!trusted(req, trustedHostsOf(ctx))) return json(403, { ok: false })
         const url = new URL(req.url ?? '/', 'http://x')
         if (url.pathname === '/vdc/ping' && req.method === 'GET') return json(200, { ok: true, name })
         if (url.pathname === '/vdc/config' && req.method === 'GET') {
