@@ -61,5 +61,19 @@ await t('SECURITY: a forged Host header (DNS rebinding) is refused', async () =>
   const code = await new Promise((resolve, reject) => { const u = new URL(base + '/vdc/config'); const q = httpRequest({ host: '127.0.0.1', port: u.port, path: u.pathname, headers: { host: 'evil.example' } }, (res) => { res.resume(); resolve(res.statusCode) }); q.on('error', reject); q.end() })
   assert.equal(code, 403)
 })
+await t('a user install is not official: no page global, and /vdc/config says so', async () => {
+  assert.equal((await (await fetch(base + '/vdc/config')).json()).official, false)
+})
+await t('built into the app (row config official: true): the page learns it through one index global', async () => {
+  const listeners = {}
+  let officialHandler
+  apply({ webRuntime: { trustedHosts: [] }, webServer: { register: (r) => { officialHandler = r.handler; return () => {} } }, effect: (fn) => fn(), on: (name, fn) => { listeners[name] = fn } }, { official: true })
+  const table = []
+  listeners['webserver/index-inject'](table)
+  assert.deepEqual(table, [{ kind: 'global', name: '__VDC_OFFICIAL__', value: { official: true } }])
+  const s = createServer((req, res) => officialHandler(req, res))
+  await new Promise((r) => s.listen(0, '127.0.0.1', r))
+  try { assert.equal((await (await fetch(`http://127.0.0.1:${s.address().port}/vdc/config`)).json()).official, true) } finally { s.close() }
+})
 server.close()
 console.log(`\n${n} host tests passed`)

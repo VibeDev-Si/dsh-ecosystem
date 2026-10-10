@@ -412,6 +412,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const updates = useMemo(() => (bundles ? E.pendingUpdates(liveCatalog, bundles) : []), [bundles, liveCatalog])
     const appUpdates = useMemo(() => (bundles ? E.appReleaseUpdates(liveCatalog, bundles) : []), [bundles, liveCatalog])
     const selfRelease = E.judgeSelfUpdate(host.version?.() ?? '0.0.0', releaseState.answer?.self)
+    // This center itself ships with the app (VibeDev Next marks it official; any app shows it as not removable).
+    const selfBuiltIn = host.official?.() === true || E.providedByApp(have.get('@vibedev-si/dsh-ecosystem'))
     const fullyChecked = releaseState.kind === 'ready' && E.releasesComplete(liveCatalog, releaseState.answer)
     const legacy = useMemo(() => (bundles ? E.legacyInstalled(liveCatalog, bundles) : []), [bundles, liveCatalog])
 
@@ -601,6 +603,9 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         const list = (selfUpd.sources || []).map((s) => { let host0 = s.registry; try { host0 = new URL(s.registry).host } catch { /* keep as is */ } return `${host0} (${s.error})` }).join(', ')
         return h('div', { className: 'res warn', 'data-testid': 'self-update', 'data-kind': 'unavailable' }, I.warn(), h('div', { style: { flex: 1 } }, h('b', null, S.selfFailT), h('span', null, S.selfFailB(list))), close)
       }
+      // Built into the app: a newer center comes with the next app release; there is nothing to reinstall.
+      if (selfBuiltIn) return h('div', { className: 'res ok', 'data-testid': 'self-update', 'data-kind': 'newer-built-in' }, I.ok(), h('div', { style: { flex: 1 } },
+        h('b', null, S.selfNewT(selfUpd.latest, cur)), h('span', null, S.selfBuiltIn)), close)
       const cd = E.cooldownState(selfUpd.publishedAt)
       return h('div', { className: 'res warn', 'data-testid': 'self-update', 'data-kind': 'newer' }, I.warn(), h('div', { style: { flex: 1 } },
         h('b', null, S.selfNewT(selfUpd.latest, cur)), h('span', null, S.selfNewB),
@@ -636,7 +641,10 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
 
     const ReleaseRows = () => [
-      selfRelease.kind === 'newer' && h('article', { className: 'card', key: 'self', 'data-testid': 'self-update-row' },
+      selfRelease.kind === 'newer' && selfBuiltIn && h('article', { className: 'card', key: 'self', 'data-testid': 'self-update-row', 'data-built-in': '' },
+        h('h3', null, S.title), h('div', { className: 'sub' }, `${SELF_PKG} · ${host.version?.() ?? ''} → ${selfRelease.latest}`),
+        h('p', null, S.selfBuiltIn), h('span', { className: 'tag' }, S.provided)),
+      selfRelease.kind === 'newer' && !selfBuiltIn && h('article', { className: 'card', key: 'self', 'data-testid': 'self-update-row' },
         h('h3', null, S.title), h('div', { className: 'sub' }, `${SELF_PKG} · ${host.version?.() ?? ''} → ${selfRelease.latest}`),
         h('p', null, S.selfRowHelp), h('code', { 'data-testid': 'self-update-spec' }, `${SELF_PKG}@${selfRelease.latest}`),
         h('div', { className: 'cfoot' }, h('button', { className: 'btn', 'data-testid': 'copy-self-update',

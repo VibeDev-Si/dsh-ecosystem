@@ -63,7 +63,30 @@ function PanelIcon(size) {
 
 function currentLocale(ctx) { try { var l = ctx.locale.getLocale(); return (l && (l.active || l.id)) || "zh"; } catch (e) { return "zh"; } }
 
+// Set by the host half (index.js) only when the app ships this center built in and says so in the row config.
+function readOfficial() { try { var g = globalThis.__VDC_OFFICIAL__; return !!(g && g.official === true); } catch (e) { return false; } }
+
+/**
+ * The Official-group card. \`summary\`: the card's one line. \`page\`: opening the card opens the center (the Plugins page
+ * returns to its list once another panel is shown), with a button in case the switch did not happen.
+ */
+function OfficialCard(p, ctx) {
+  var h = React.createElement;
+  var S = STR[pick(currentLocale(ctx))];
+  var open = function () { try { ctx.layout.selectPanel(PANEL_ID); } catch (e) {} };
+  if (!p || p.view !== "page") return S.officialSummary;
+  return h(OfficialPage, { open: open, S: S });
+}
+function OfficialPage(props) {
+  var h = React.createElement;
+  React.useEffect(function () { props.open(); }, []);
+  return h("div", { "data-vdc-official": "", style: { display: "flex", flexDirection: "column", gap: 12, alignItems: "flex-start" } },
+    h("p", { style: { margin: 0 } }, props.S.officialPage),
+    h("button", { type: "button", className: "dsw-button", onClick: props.open }, props.S.officialOpen));
+}
+
 function apply(ctx) {
+  var OFFICIAL = readOfficial();
   // The registry probe is optional: the center works without it, so a missing service must not stop the plugin loading.
   // (Reading it without declaring it throws "cannot get property ... without inject", seen in a live self-check.)
   var probeHolder = { probe: undefined };
@@ -83,6 +106,8 @@ function apply(ctx) {
     settle: function () { return ctx.__vdcSettle || null; },
     // The version of THIS center, shown in the header and compared with npm's latest when the user clicks "check for updates".
     version: function () { return VERSION; },
+    // Built into the app: a newer center arrives with the app, so it is not reinstalled from the Plugins page.
+    official: function () { return OFFICIAL; },
     // One user-initiated read of npm's latest version, made by the host half (index.js /vdc/latest). Resolves to undefined on any failure.
     checkLatest: function () {
       var ctl = typeof AbortController === "function" ? new AbortController() : null;
@@ -120,6 +145,17 @@ function apply(ctx) {
       label: function () { return STR[pick(currentLocale(ctx))].title; }, locale: "vibedevCenter"
     }, function (p) { return PanelIcon((p && p.size) || 18); });
   });
+  // Built into the app (VibeDev Next): one card in the Plugins page's Official group. Its page opens the center itself.
+  // A user's own install never sets the global, so DeepSeek Harness keeps the plain sidebar entry and nothing else.
+  if (OFFICIAL) {
+    ctx.slots.inject("plugins.item", function () {
+      return ctx.slots.register({
+        name: "plugins.item", id: "vibedev-ecosystem", order: 5,
+        label: function () { return STR[pick(currentLocale(ctx))].title; }, locale: "vibedevCenter",
+        inject: function () { return {}; }
+      }, function (p) { return OfficialCard(p, ctx); });
+    });
+  }
   setTimeout(function () { try { runSelfCheck(ctx, PANEL_ID, CATALOG, LOAD_ERRORS, VERSION, probeHolder, E.chooseRegistry, E); } catch (e) {} }, 2500);
 }
 

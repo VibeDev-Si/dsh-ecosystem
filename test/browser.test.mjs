@@ -23,7 +23,7 @@ const ver = (id) => CATALOG.plugins.find((x) => x.id === id).version
 const pub = (id) => CATALOG.plugins.find((x) => x.id === id).publishedAt
 
 const FAST = { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 40, maxMs: 300 } }
-async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false, noProbe = false, fastest, resolved, brand, settle = FAST } = {}) {
+async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', market = false, dark = false, noProbe = false, fastest, resolved, brand, settle = FAST, official = false } = {}) {
   const page = await browser.newPage()
   const errs = []
   page.on('pageerror', (e) => errs.push(String(e)))
@@ -33,6 +33,7 @@ async function boot({ initial = [], scenarios = {}, delay = 0, locale = 'zh', ma
   await page.goto('http://127.0.0.1:4801/')
   if (dark) await page.evaluate(() => { const s = document.documentElement.style; const v = { '--dsw-alias-bg-base': '#16171b', '--dsw-alias-bg-layer-1': '#1e1f25', '--dsw-alias-bg-layer-2': '#272830', '--dsw-alias-bg-overlay': '#2a2b33', '--dsw-alias-border-l1': 'rgba(255,255,255,.09)', '--dsw-alias-border-l2': 'rgba(255,255,255,.18)', '--dsw-alias-brand-primary': '#6f87ff', '--dsw-alias-label-primary': '#ececf2', '--dsw-alias-label-secondary': '#9b9fae' }; for (const k in v) s.setProperty(k, v[k]); document.body.style.background = '#16171b' })
   if (brand) await page.evaluate((b) => document.documentElement.style.setProperty('--dsw-alias-brand-primary', b), brand)
+  if (official) await page.evaluate(() => { window.__VDC_OFFICIAL__ = { official: true } })
   await page.evaluate(async (initial, scenarios, delay, locale, market, noProbe, fastest, resolved, settle) => {
     const { createFakePm } = await import('/fake-pm.js')
     window.__pm = createFakePm(initial, scenarios, { delay, resolved })
@@ -57,6 +58,31 @@ try {
     ok('registers the main panel and the sidebar icon', reg.injected.includes('main') && reg.injected.includes('sidebar.panellist'), reg.injected.join(','))
     ok('panel key and sidebar id match (so selectPanel opens it)', reg.decls.some((d) => d.name === 'main' && d.key === 'vibedev-center') && reg.decls.some((d) => d.name === 'sidebar.panellist' && d.id === 'vibedev-center'))
     ok('no page errors on first render', errs.length === 0, errs.join('; '))
+    ok('a user install (DeepSeek Harness, no official config) adds NO card to the Plugins page', !reg.injected.includes('plugins.item'))
+    await page.close()
+  }
+  // 0b ── built into the app (VibeDev Next sets official: true): one card in the Official group that opens the center
+  {
+    const { page, errs } = await boot({ official: true })
+    const card = await page.evaluate(() => {
+      const s = window.__reg.slots.find((x) => x.decl && x.decl.name === 'plugins.item')
+      if (!s) return null
+      return { id: s.decl.id, order: s.decl.order, label: s.decl.label(), summary: s.comp({ view: 'summary' }) }
+    })
+    ok('official: registers one plugins.item card', !!card && card.id === 'vibedev-ecosystem', JSON.stringify(card))
+    ok('official: the card is titled like the sidebar entry and has a one-line summary', card && card.label === 'VibeDev 生态' && typeof card.summary === 'string' && card.summary.length > 0, card && card.label)
+    await page.evaluate(() => {
+      window.__panelSwitches = []
+      const s = window.__reg.slots.find((x) => x.decl && x.decl.name === 'plugins.item')
+      const box = document.createElement('div'); box.id = 'official-page'; document.body.appendChild(box)
+      window.__officialRoot = ReactDOM.createRoot(box)
+      window.__officialRoot.render(window.React.createElement(function () { return s.comp({ view: 'page' }) }))
+    })
+    await sleep(150)
+    ok('official: opening the card opens the center panel', (await page.evaluate(() => window.__panelSwitches)).includes('vibedev-center'), JSON.stringify(await page.evaluate(() => window.__panelSwitches)))
+    await page.evaluate(() => { window.__panelSwitches = []; document.querySelector('#official-page button').click() })
+    ok('official: the page keeps a button that opens it again', (await page.evaluate(() => window.__panelSwitches)).includes('vibedev-center'))
+    ok('official: no page errors', errs.length === 0, errs.join('; '))
     await page.close()
   }
 
@@ -599,6 +625,15 @@ try {
     ok('the × dismisses the banner', (await selfBanner(page)) === null)
     await checkNow(page)
     ok('checking again asks again (the mount read plus one per deliberate click, nothing in between)', benchState.updatesHits === 3, 'hits=' + benchState.updatesHits)
+    await page.close()
+  }
+  {
+    benchState.latest = { ok: true, latest: NEWER, publishedAt: OLD_PUB, sources: [] }; benchState.latestHits = 0; benchState.updatesHits = 0
+    const { page } = await boot({ official: true, initial: [{ name: 'dsh-better-sidebar', version: '0.24.1' }] })
+    await checkNow(page)
+    const b = await selfBanner(page)
+    ok('built into the app: a newer center is announced as coming with the app', b.kind === 'newer-built-in' && b.text.includes(NEWER) && b.text.includes('随应用更新'), b.text.split('\n')[0])
+    ok('built into the app: no remove-and-reinstall steps, no package name to copy', !b.text.includes('卸载') && !(await page.evaluate(() => !!document.querySelector('[data-testid=copy-self]'))))
     await page.close()
   }
   {

@@ -1,6 +1,6 @@
 {
   "name": "@vibedev-si/dsh-ecosystem",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "VibeDev 生态：发现、安装和管理 VibeDev 出品的插件，实时核对正式版本更新，并可浏览 DSH 社区市场 · VibeDev Ecosystem: discover and manage plugins made by VibeDev, verify stable release updates, and browse the DSH community market",
   "type": "module",
   "main": "index.js",
@@ -20,19 +20,39 @@
   ],
   "exports": {
     ".": "./index.js",
-    "./client": { "default": "./client.js" },
+    "./client": {
+      "default": "./client.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
-  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "vibedev", "plugin-center", "installer", "suite"],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "vibedev",
+    "plugin-center",
+    "installer",
+    "suite"
+  ],
   "author": "VibeDev",
   "license": "MIT",
   "homepage": "https://github.com/VibeDev-Si/dsh-ecosystem#readme",
-  "repository": { "type": "git", "url": "git+https://github.com/VibeDev-Si/dsh-ecosystem.git" },
-  "bugs": { "url": "https://github.com/VibeDev-Si/dsh-ecosystem/issues" },
-  "engines": { "node": ">=20" },
-  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VibeDev-Si/dsh-ecosystem.git"
+  },
+  "bugs": {
+    "url": "https://github.com/VibeDev-Si/dsh-ecosystem/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "validate": "node scripts/validate-catalog.mjs",
@@ -42,10 +62,14 @@
     "prepack": "node scripts/build.mjs"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
-      "inject": ["@deepseek-ai/dsh-client-locale"]
+      "inject": [
+        "@deepseek-ai/dsh-client-locale"
+      ]
     }
   }
 }

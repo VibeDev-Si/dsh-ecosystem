@@ -7,8 +7,9 @@
  * allow-list of official plugins plus this center (`catalog-updates.js`).
  *
  *   GET  /vdc/ping        -> {ok:true}
- *   GET  /vdc/config      -> {selfcheck, mount}: does <profile>/.vdc/enable-selfcheck exist, and does enable-selfcheck-mount
- *                            (the second, separate opt-in that lets the check switch panels, which the user can SEE)
+ *   GET  /vdc/config      -> {selfcheck, mount, official}: does <profile>/.vdc/enable-selfcheck exist, and does
+ *                            enable-selfcheck-mount (the second, separate opt-in that lets the check switch panels, which
+ *                            the user can SEE); and whether this is an app's built-in copy (row config `official: true`)
  *   POST /vdc/selfcheck   -> writes the client's report to <profile>/.vdc/selfcheck.json  (only when enabled)
  *   GET  /vdc/latest      -> the newest version of THIS package on npm. Called only when the user clicks "check for
  *                            updates"; never on load, never on a timer.
@@ -95,7 +96,18 @@ export async function latestVersion(doFetch) {
   return { ok: true, name: PACKAGE, latest: best.version, publishedAt: best.publishedAt, from: best.registry, sources }
 }
 
-export function apply(ctx) {
+/** Page global telling the client half it is the app's built-in, official copy (see {@link apply}). */
+export const OFFICIAL_GLOBAL = '__VDC_OFFICIAL__'
+
+/**
+ * @param ctx - the host context.
+ * @param config - `official: true` only in an app that ships this center built in (VibeDev Next's web defaults set it on
+ *   their own insert row). Then the client half lists the center in the Official group of the Plugins page and reports
+ *   that it updates with the app. A user's own install (DeepSeek Harness, `Add plugin`) passes no config: nothing changes.
+ */
+export function apply(ctx, config) {
+  const official = config?.official === true
+  if (official) ctx.on('webserver/index-inject', (table) => { table.push({ kind: 'global', name: OFFICIAL_GLOBAL, value: { official: true } }) })
   // `ctx.__vdcFetch` is a test hook; the real host never sets it, so production uses the global fetch.
   const doFetch = (...a) => (ctx.__vdcFetch ?? globalThis.fetch)(...a)
   let cache // {at, body}: a user mashing the button must not hammer the registry
@@ -115,7 +127,7 @@ export function apply(ctx) {
         if (url.pathname === '/vdc/config' && req.method === 'GET') {
           const on = await exists(markerPath())
           // The visible part only ever applies when the whole self-check is on.
-          return json(200, { ok: true, selfcheck: on, mount: on && (await exists(mountMarkerPath())) })
+          return json(200, { ok: true, selfcheck: on, mount: on && (await exists(mountMarkerPath())), official })
         }
         if (url.pathname === '/vdc/latest' && req.method === 'GET') {
           if (cache && Date.now() - cache.at < CACHE_MS) return json(200, { ...cache.body, cached: true })

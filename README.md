@@ -2,6 +2,12 @@
 
 集中了解、安装和管理 **VibeDev 出品的插件**，并在独立的社区标签页里浏览 **DSH 社区市场（dshmarket）**。VibeDev 生态与 DSH 宿主的插件管理器是不同入口；安装、启停与卸载仍由宿主执行。
 
+## 0.1.9
+
+- **VibeDev Next 内置**：VibeDev Next 把 VibeDev 生态作为内置官方插件提供。它出现在「插件」页的「官方」分组里，点开即进入生态页面；版本随应用更新，在 VibeDev Next 里不需要也不能另外安装。
+- 内置时，生态自身的新版本提示改为「随应用更新」，不再给出卸载重装步骤。
+- 官方 DSH 或自行安装时行为不变：侧栏入口加面板，可停用、可卸载，自更新沿用手动说明。只有应用在自己的插入行里写明 `config: { official: true }` 才进入内置模式。
+
 ## 0.1.8
 
 - 社区市场的样式与生态页面隔离，生态的按钮、卡片和字体规则不再覆盖市场子树。对不透明填充按钮上不足 4.5:1 的文字对比度，按按钮实际背景选择黑或白文字；保留市场的背景、主题 token、图标按钮和开关。
@@ -23,22 +29,18 @@
 
 ## 安装与管理
 
-在 DSH / VibeDev 的插件页按完整包名安装：
+VibeDev Next 已内置 VibeDev 生态，无需安装；在 VibeDev Next 的「添加插件」里输入它会提示已安装。
+
+在 DSH 的插件页按完整包名安装：
 
 ```text
-@vibedev-si/dsh-ecosystem@0.1.8
+@vibedev-si/dsh-ecosystem@0.1.9
 ```
 
 独立 DSH 的命令：
 
 ```sh
-dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.8
-```
-
-VibeDev Next 桌面版先完全退出应用，再运行：
-
-```sh
-vibedev-app plugin --profile desktop add @vibedev-si/dsh-ecosystem@0.1.8
+dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.9
 ```
 
 - 安装前会列出精确版本与依赖，先检查、安装为停用状态，再启用。已安装的组件会复用；更新原本停用的插件会保持停用。
