@@ -2,6 +2,11 @@
 
 集中了解、安装和管理 **VibeDev 出品的插件**，并在独立的社区标签页里浏览 **DSH 社区市场（dshmarket）**。VibeDev 生态与 DSH 宿主的插件管理器是不同入口；安装、启停与卸载仍由宿主执行。
 
+## 0.1.11
+
+- 目录：媒体预览与画廊升到 0.2.0，直接用 DSH 自带的右侧栏，**不再需要 Better Sidebar**；「AI 创作套装」只含 VibeDev 自己的三个插件。Better Sidebar 仍可单独安装，作为推荐搭档。
+- 随包离线目录同步更新：读不到在线目录时（例如网络无法访问 GitHub）看到的也是新版本与新依赖关系。
+
 ## 0.1.10
 
 - 兼容 DSH 0.2.1-alpha.2 及以后：宿主把启动参数服务从 `webRuntime` 改名为 `webStartup`，0.1.9 及更早版本在新宿主上会停在「等待服务」而不加载。现在只依赖 Web 服务本身，额外的受信主机从两种服务中按宿主实际提供的读取。
@@ -38,13 +43,13 @@ VibeDev Next 已内置 VibeDev 生态，无需安装；在 VibeDev Next 的「�
 在 DSH 的插件页按完整包名安装：
 
 ```text
-@vibedev-si/dsh-ecosystem@0.1.10
+@vibedev-si/dsh-ecosystem@0.1.11
 ```
 
 独立 DSH 的命令：
 
 ```sh
-dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.10
+dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.11
 ```
 
 - 安装前会列出精确版本与依赖，先检查、安装为停用状态，再启用。已安装的组件会复用；更新原本停用的插件会保持停用。

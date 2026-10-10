@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-07",
+  "updated": "2026-10-11",
   "suites": [
     {
       "id": "creator",
@@ -9,7 +9,7 @@
         "zh": "写剧本 → 排分镜 → 生成素材 → 预览成片素材，一套装齐",
         "en": "Script → storyboard → generate assets → preview them, installed in one go"
       },
-      "items": ["dsh-better-sidebar", "@vibedev-si/dsh-vibedev", "dsh-film", "@vibedev-si/dsh-media-viewer"]
+      "items": ["@vibedev-si/dsh-vibedev", "dsh-film", "@vibedev-si/dsh-media-viewer"]
     }
   ],
   "plugins": [
@@ -107,35 +107,37 @@
     {
       "id": "@vibedev-si/dsh-media-viewer",
       "npm": "@vibedev-si/dsh-media-viewer",
-      "version": "0.1.3",
-      "publishedAt": "2026-10-06T17:29:57.454Z",
+      "version": "0.2.0",
+      "publishedAt": "2026-10-10T16:48:05.236Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
       "name": { "zh": "媒体预览与画廊", "en": "Media Viewer" },
       "tagline": {
-        "zh": "在右侧栏直接预览视频、音频和 HTML，并按文件夹浏览媒体画廊",
-        "en": "Preview video, audio and HTML right in the sidebar, and browse a folder as a media gallery"
+        "zh": "在右侧栏直接预览视频、音频和 HTML，按文件夹浏览媒体画廊，多选加入影视画布",
+        "en": "Preview video, audio and HTML right in the sidebar, browse a folder as a media gallery, and add picks to the film canvas"
       },
       "does": {
         "zh": [
           "视频：可拖进度条、倍速、循环，不限文件大小",
           "音频：实时频谱、倍速、循环",
           "HTML：默认允许脚本，在隔离沙箱里运行；可看源码、切换手机/平板/桌面宽度",
-          "媒体画廊：缩略图、按类型筛选、搜索、灯箱浏览"
+          "媒体画廊：缩略图、按类型筛选、搜索、灯箱浏览；多选后加入影视工作台画布",
+          "直接用 DSH 自带的右侧栏，不需要其他插件"
         ],
         "en": [
           "Video: seekable, speed control, loop, no file-size cap",
           "Audio: live spectrum, speed control, loop",
           "HTML: scripts allowed by default, inside an isolated sandbox; view source, switch phone/tablet/desktop width",
-          "Media gallery: thumbnails, type filters, search, lightbox"
+          "Media gallery: thumbnails, type filters, search, lightbox; multi-select and add to the Film Studio canvas",
+          "Uses DSH's own right sidebar; no other plugin needed"
         ]
       },
-      "tags": ["official", "needsSidebar"],
-      "requires": ["dsh-better-sidebar"],
+      "tags": ["official"],
+      "requires": [],
       "partners": ["dsh-film", "@vibedev-si/dsh-vibedev"],
       "legacyNames": ["dsh-media-viewer"],
-      "sizeKB": 64,
+      "sizeKB": 86,
       "capabilities": [
         { "key": "readFiles", "text": { "zh": "只读取当前会话工作目录内的文件", "en": "Reads only files inside the current session's working directory" } },
         { "key": "localRoute", "text": { "zh": "在本机服务上增加 /mp 路由，仅回环地址可访问", "en": "Adds /mp routes to the local server, reachable from loopback only" } },
@@ -153,7 +155,7 @@
       "version": "0.24.1",
       "publishedAt": "2026-09-28T15:37:38.360Z",
       "origin": "community",
-      "role": "dependency",
+      "role": "companion",
       "updates": "self",
       "author": "omdsh-dev",
       "name": { "zh": "Better Sidebar", "en": "Better Sidebar" },
@@ -165,7 +167,7 @@
         "zh": ["把文件树、文本编辑器、Git 变更、任务和侧边对话放进右侧栏", "让其他插件注册新的右侧栏标签页和文件预览器"],
         "en": ["Puts the file tree, text editor, Git changes, tasks and side chat in the right column", "Lets other plugins register new sidebar tabs and file viewers"]
       },
-      "tags": ["community", "dependency"],
+      "tags": ["community", "companion"],
       "requires": [],
       "partners": [],
       "legacyNames": [],

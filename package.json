@@ -1,6 +1,6 @@
 {
   "name": "@vibedev-si/dsh-ecosystem",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "VibeDev 生态：发现、安装和管理 VibeDev 出品的插件，实时核对正式版本更新，并可浏览 DSH 社区市场 · VibeDev Ecosystem: discover and manage plugins made by VibeDev, verify stable release updates, and browse the DSH community market",
   "type": "module",
   "main": "index.js",

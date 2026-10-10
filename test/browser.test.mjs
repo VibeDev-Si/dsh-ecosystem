@@ -95,7 +95,7 @@ try {
     await clickText(page, '关于 VibeDev 生态'); await sleep(120)
     ok('...and clicking it explains what this is', (await text(page)).includes('VibeDev 团队出品的插件'))
     ok('shows 3 official cards + 2 companions', (await page.evaluate(() => document.querySelectorAll('.card').length)) === 5)
-    ok('suite says it will install 3 (sidebar already there)', t.includes('将安装 3 个插件（已装 1 个）'))
+    ok('the suite installs our three plugins (Better Sidebar is no longer part of it)', t.includes('将安装 3 个插件（已装 0 个）'))
     ok('account + billing is visible on the card', t.includes('需要 VibeDev 账号') && t.includes('按用量计费'))
     ok('community plugins are labelled as such', (await page.evaluate(() => [...document.querySelectorAll('.card[data-id=dshmarket] .tag')].map((x) => x.textContent))).includes('DSH 社区市场插件'))
     await shot(page, '01-home'); await page.close()
@@ -127,15 +127,15 @@ try {
     await page.close()
   }
 
-  // 3 ── single plugin whose prerequisite is missing: installs both, prerequisite first
+  // 3 ── single plugin whose prerequisite is missing (the film plugin needs the account): installs both, prerequisite first
   {
     const { page } = await boot()
-    await page.evaluate(() => document.querySelector('.card[data-id="@vibedev-si/dsh-media-viewer"] .btn.primary').click())
+    await page.evaluate(() => document.querySelector('.card[data-id="dsh-film"] .btn.primary').click())
     await page.waitForSelector('[data-testid=confirm]')
-    ok('confirm sheet lists the prerequisite too', (await text(page)).includes('Better Sidebar'))
+    ok('confirm sheet lists the prerequisite too', (await text(page)).includes('VibeDev 账号与模型'))
     await shot(page, '05-confirm-with-dep')
     await click(page, '[data-testid=confirm]'); await waitText(page, '安装完成')
-    ok('prerequisite installed before the plugin', (await calls(page)).filter((x) => x[0] === 'installBundle').map((x) => x[1]).join() === `dsh-better-sidebar@0.24.1,${spec(MV)}`)
+    ok('prerequisite installed before the plugin', (await calls(page)).filter((x) => x[0] === 'installBundle').map((x) => x[1]).join() === `${spec(VD)},${spec('dsh-film')}`)
     await page.close()
   }
 
@@ -804,7 +804,7 @@ try {
     const card = await page.$eval(accountCard, (el) => el.innerText)
     ok('built-in account remains visible with the new package name and its actual supplied version', card.includes('VibeDev 账号与模型') && card.includes('@vibedev-si/dsh-vibedev · 0.2.0'))
     ok('built-in enabled through default layers is labelled enabled and has no duplicate install or management button', card.includes('应用内置 · 已启用') && await page.$eval(accountCard, (el) => !el.querySelector('.btn.primary, .btn.idle')))
-    ok('suite counts the built-in account as already present', (await text(page)).includes('将安装 2 个插件（已装 2 个）'))
+    ok('suite counts the built-in account as already present', (await text(page)).includes('将安装 2 个插件（已装 1 个）'))
     ok('built-in versions are not offered as separate npm updates', !(await page.evaluate(() => !!document.querySelector('.grid .card[data-id="@vibedev-si/dsh-vibedev"] .btn.warn'))))
     await click(page, '[data-tab=updates]')
     const builtInRow = await page.evaluate(() => { const rows = [...document.querySelectorAll('[data-testid=app-update-row]')]; return { rows: rows.length, buttons: rows.reduce((n, el) => n + el.querySelectorAll('button').length, 0), text: rows[0]?.innerText ?? '' } })

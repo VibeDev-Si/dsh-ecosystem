@@ -14,13 +14,14 @@ const t = async (name, fn) => { await fn(); n++; console.log('ok  ' + name) }
 
 // ── plan ────────────────────────────────────────────────────────────────────
 await t('plan: dependencies come first, no duplicates', () => {
-  const plan = E.resolvePlan(catalog, [MV, VD, MV])
-  assert.deepEqual(plan.map((p) => p.id), ['dsh-better-sidebar', MV, VD])
+  // dsh-film requires the account plugin (0.2.0 of the media viewer needs no other plugin).
+  const plan = E.resolvePlan(catalog, ['dsh-film', VD, 'dsh-film', MV])
+  assert.deepEqual(plan.map((p) => p.id), [VD, 'dsh-film', MV])
 })
-await t('plan: the creator suite expands to all four in dependency order', () => {
+await t('plan: the creator suite expands to our three plugins in dependency order (no third-party prerequisite)', () => {
   const s = catalog.suites[0]
   const ids = E.resolvePlan(catalog, s.items).map((p) => p.id)
-  assert.equal(ids[0], 'dsh-better-sidebar'); assert.equal(new Set(ids).size, 4)
+  assert.equal(ids[0], VD); assert.equal(new Set(ids).size, 3); assert.ok(!ids.includes('dsh-better-sidebar'))
 })
 await t('plan: an id that is not in the catalog is refused', () => {
   assert.throws(() => E.resolvePlan(catalog, ['evil-package']), /not in catalog/)
@@ -285,13 +286,13 @@ await t('plan run: stops at the first failure, keeps what is done, touches nothi
   assert.equal(stoppedAt, VD); assert.equal(results.length, 1)
   assert.ok(!pm.calls.some((c) => String(c[1]).startsWith('dsh-film')), 'dsh-film must not be touched')
 })
-await t('plan run: creator suite with the sidebar already installed installs the other three', async () => {
-  const pm = createFakePm([{ name: 'dsh-better-sidebar', version: '0.24.1' }])
+await t('plan run: creator suite with the account plugin already installed installs the other two', async () => {
+  const pm = createFakePm([{ name: VD, version: by(VD).version }])
   const bundles = (await pm.listBundles()).value
   const rows = E.markInstalled(E.resolvePlan(catalog, catalog.suites[0].items), bundles)
   const { results } = await E.installPlan(pm, rows)
-  assert.deepEqual(results.map((r) => r.status), ['skipped', 'done', 'done', 'done'])
-  assert.equal(pm.calls.filter((c) => c[0] === 'installBundle').length, 3)
+  assert.deepEqual(results.map((r) => r.status), ['skipped', 'done', 'done'])
+  assert.equal(pm.calls.filter((c) => c[0] === 'installBundle').length, 2)
 })
 await t('plan run: cancel via AbortSignal stops before the next plugin', async () => {
   const pm = createFakePm(); const ac = new AbortController()
@@ -395,11 +396,11 @@ await t('switch: new one installed but off, old one on -> the old one goes off b
   assert.deepEqual(pm.calls.map((c) => [c[0], c[1], c[2]].join(':')), ['setBundleEnabled:dsh-media-viewer:false', `setBundleEnabled:${MV}:true`, 'removeBundle:dsh-media-viewer:'])
 })
 await t('switch: the creator suite over an installed dsh-media replaces it (dsh-vibedev was dsh-media), never both on', async () => {
-  const pm = createFakePm([{ name: 'dsh-better-sidebar', version: '0.24.1' }, { name: 'dsh-media', version: '0.1.3' }])
+  const pm = createFakePm([{ name: 'dsh-media', version: '0.1.3' }])
   const rows = E.markInstalled(E.resolvePlan(catalog, catalog.suites[0].items), (await pm.listBundles()).value)
   assert.equal(rows.find((r) => r.entry.id === VD).legacy, 'dsh-media')
   const { results } = await E.installPlan(pm, rows)
-  assert.deepEqual(results.map((r) => r.status), ['skipped', 'done', 'done', 'done'])
+  assert.deepEqual(results.map((r) => r.status), ['done', 'done', 'done'])
   const seq = pm.calls.map((c) => `${c[0]}:${c[1]}${c[0] === 'setBundleEnabled' ? ':' + c[2] : ''}`)
   assert.ok(seq.indexOf('setBundleEnabled:dsh-media:false') < seq.indexOf(`setBundleEnabled:${VD}:true`), seq.join(' | '))
   assert.equal(pm.bundles.has('dsh-media'), false); assert.equal(pm.bundles.get(VD).enabled, true)
@@ -495,10 +496,10 @@ await t('provided: defaults can enable a built-in package without a profile depe
   assert.equal(pm.calls.length, 0, 'must not install or select a second copy')
 })
 await t('provided: the suite reuses the built-in account and installs only film and viewer', async () => {
-  const pm = createFakePm([{ name: 'dsh-better-sidebar', version: '0.24.1' }, suppliedAccount()])
+  const pm = createFakePm([suppliedAccount()])
   const rows = E.markInstalled(E.resolvePlan(catalog, catalog.suites[0].items), await inventoryOf(pm))
   const r = await E.installPlan(pm, rows)
-  assert.deepEqual(r.results.map((x) => x.status), ['skipped', 'skipped', 'done', 'done'])
+  assert.deepEqual(r.results.map((x) => x.status), ['skipped', 'done', 'done'])
   assert.deepEqual(pm.calls.filter((x) => x[0] === 'installBundle').map((x) => x[1]), [E.specOf(by('dsh-film')), E.specOf(by(MV))])
   assert.ok(!pm.calls.some((x) => x[0] === 'setBundleEnabled' && x[1] === VD))
 })
@@ -548,7 +549,7 @@ await t('provided: migration reuses the enabled built-in and only disables/remov
   assert.deepEqual(pm.calls.filter((x) => !['listBundles', 'listPlugins'].includes(x[0])).map((x) => [x[0], x[1]]), [['setBundleEnabled', 'dsh-media'], ['removeBundle', 'dsh-media']])
 })
 await t('provided: inline suite migration cannot skip the old external copy or reinstall the new one', async () => {
-  const pm = createFakePm([{ name: 'dsh-better-sidebar', version: '0.24.1' }, suppliedAccount(), { name: 'dsh-media', version: '0.1.3' }])
+  const pm = createFakePm([suppliedAccount(), { name: 'dsh-media', version: '0.1.3' }])
   const rows = E.markInstalled(E.resolvePlan(catalog, catalog.suites[0].items), await inventoryOf(pm))
   assert.equal(E.needsInstall(rows.find((r) => r.entry.id === VD)), true)
   await E.installPlan(pm, rows)
@@ -653,13 +654,13 @@ await t('built-in release differences are visible separately and excluded from e
   assert.deepEqual(E.pendingUpdates(catalog, bundles).map(u => u.entry.id), [MV])
 })
 await t('installing a verified live release passes its exact version and registry through inspect and install', async () => {
-  const answer = releaseAnswer(); answer.plugins.find(p => p.name === MV).version = '0.1.9'
+  const answer = releaseAnswer(); answer.plugins.find(p => p.name === MV).version = '0.2.9'
   const entry = E.catalogWithReleases(catalog, answer).plugins.find(p => p.id === MV)
   const pm = createFakePm()
   const result = await E.installOne(pm, entry, { installed: false }, { registry: entry.registry })
   assert.equal(result.status, 'done')
-  assert.equal(pm.calls.find(c => c[0] === 'inspect')[1], MV + '@0.1.9')
-  assert.equal(pm.calls.find(c => c[0] === 'installBundle')[1], MV + '@0.1.9')
+  assert.equal(pm.calls.find(c => c[0] === 'inspect')[1], MV + '@0.2.9')
+  assert.equal(pm.calls.find(c => c[0] === 'installBundle')[1], MV + '@0.2.9')
   assert.equal(pm.calls.find(c => c[0] === 'installBundle')[2].registry, 'https://registry.npmjs.org/')
 })
 await t('a validated online listing adds a new VibeDev plugin without changing the client snapshot', () => {
