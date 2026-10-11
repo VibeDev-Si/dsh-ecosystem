@@ -46,7 +46,7 @@ const batch = ({ latest = LIVE, registry = OFFICIAL, degraded = false, selfRegis
   self: { ok: true, latest: selfLatest ?? latest, publishedAt: OLD_PUB, registry: selfRegistry ?? registry, ...(degraded ? { degraded: true } : {}) },
 })
 
-async function boot({ initial = [], scenarios = {}, locale = 'zh', market = false, delay = 0, settle = FAST } = {}) {
+async function boot({ initial = [], scenarios = {}, locale = 'zh', market = false, delay = 0, listDelay = 0, settle = FAST, keepMemory = false } = {}) {
   const page = await browser.newPage()
   const errs = []
   page.on('pageerror', (e) => errs.push(String(e)))
@@ -54,11 +54,11 @@ async function boot({ initial = [], scenarios = {}, locale = 'zh', market = fals
   // A failed request is reported WITH its url, so a real missing resource is never hidden by ignoring the message.
   page.on('response', (r) => { if (r.status() >= 400 && !/favicon\.ico/.test(r.url())) errs.push(`HTTP ${r.status()} ${r.url()}`) })
   await page.goto(ORIGIN + '/')
-  await page.evaluate(async (initial, scenarios, delay, locale, market, settle) => {
+  await page.evaluate(async (initial, scenarios, delay, locale, market, settle, keepMemory, listDelay) => {
     const { createFakePm } = await import('/fake-pm.js')
-    window.__pm = createFakePm(initial, scenarios, { delay })
-    window.setup({ locale, market, settle }); window.mountPanel()
-  }, initial, scenarios, delay, locale, market, settle)
+    window.__pm = createFakePm(initial, scenarios, { delay, listDelay })
+    window.setup({ locale, market, settle, keepMemory }); window.mountPanel()
+  }, initial, scenarios, delay, locale, market, settle, keepMemory, listDelay)
   await page.waitForSelector('[data-testid=center]')
   return { page, errs }
 }
@@ -289,6 +289,61 @@ try {
     ok('...after which the shipped version is shown again', (await page.evaluate((n) => window.__pm.bundles.get(n)?.version, VD)) === '0.0.1')
     ok('no page errors', errs.length === 0, errs.join('; '))
     await page.close()
+  }
+  // ── no flash: the page opens on the newest catalog it knows, and never offers 安装 for a plugin it has not checked ──
+  {
+    benchState.updates = batch(); benchState.updatesHits = 0; benchState.updatesDelay = 1500
+    const filmVersion = (page) => page.evaluate((id) => document.querySelector(`.card[data-id="${id}"] .sub`)?.textContent ?? '', FILM)
+    const pending = (page, id) => page.evaluate((x) => !!document.querySelector(`.card[data-id="${x}"] [data-testid=state-pending]`), id)
+    const installButton = (page, id) => page.evaluate((x) => !!document.querySelector(`.card[data-id="${x}"] .btn.primary`), id)
+    const enabledBadge = (page, id) => page.evaluate((x) => !!document.querySelector(`.card[data-id="${x}"] .btn.ok`), id)
+    // An installed plugin's card shows its state (已启用, or 更新到 x once a newer release is known) with a 管理 menu.
+    const installedState = (page, id) => page.evaluate((x) => !!document.querySelector(`.card[data-id="${x}"] .acts`), id)
+    // First visit ever: nothing kept. The installed list takes 700 ms, the release check 1.5 s.
+    const { page, errs } = await boot({ initial: [{ name: MV, version: ver(MV), enabled: true }], listDelay: 700 })
+    ok('first frame: an installed plugin shows no 安装 button before the installed list arrives', !(await installButton(page, MV)) && await pending(page, MV))
+    ok('first frame: nor does a plugin that is not installed', !(await installButton(page, FILM)) && await pending(page, FILM))
+    const suiteHeight = () => page.evaluate(() => document.querySelector('.suite')?.getBoundingClientRect().height ?? 0)
+    const before = await suiteHeight()
+    await page.waitForFunction((id) => !!document.querySelector(`.card[data-id="${id}"] .btn.ok`), { timeout: 5000 }, MV)
+    const after = await suiteHeight()
+    ok('the suite box keeps its height when the installed list arrives (nothing below it moves)', before > 0 && Math.abs(before - after) < 0.5, `before ${before} after ${after}`)
+    ok('...then the installed plugin shows as enabled, the other one as installable', await enabledBadge(page, MV) && await installButton(page, FILM))
+    await page.waitForFunction((id, v) => (document.querySelector(`.card[data-id="${id}"] .sub`)?.textContent ?? '').includes(v), { timeout: 8000 }, FILM, LIVE)
+    ok('...and the live release replaces the shipped version once checked', (await filmVersion(page)).includes(LIVE), await filmVersion(page))
+
+    // Coming back to the page in the same session: everything is already known.
+    const hits = benchState.updatesHits
+    await page.evaluate(() => window.mountPanel())
+    ok('re-entry: the live version is there at once, not the shipped one', (await filmVersion(page)).includes(LIVE), await filmVersion(page))
+    ok('re-entry: the installed state is there at once (no placeholder, no 安装 for an installed plugin)', await installedState(page, MV) && !(await pending(page, MV)) && !(await installButton(page, MV)))
+    await sleep(1700)
+    ok('re-entry still asks the route once, and only once', benchState.updatesHits === hits + 1, `hits ${hits} -> ${benchState.updatesHits}`)
+    ok('no page errors', errs.length === 0, errs.join('; '))
+    await page.close()
+
+    // After an app restart (a new page): the kept answer is shown at once, but never as checked just now.
+    const next = await boot({ initial: [{ name: MV, version: ver(MV), enabled: true }], listDelay: 700, keepMemory: true })
+    ok('restart: the live version kept from the last visit is shown at once', (await filmVersion(next.page)).includes(LIVE), await filmVersion(next.page))
+    await click(next.page, '[data-tab=updates]')
+    ok('restart: while the new check runs, the status says checking, not verified', (await state(next.page)) === 'checking', String(await state(next.page)))
+    await next.page.waitForFunction(() => document.querySelector('[data-testid=release-status]')?.dataset.state === 'verified', { timeout: 8000 })
+    ok('...and verified once the check answers', (await state(next.page)) === 'verified')
+    ok('no page errors', next.errs.length === 0, next.errs.join('; '))
+    await next.page.close()
+
+    // A kept answer the validator refuses is never shown: the shipped catalog stands.
+    const forged = { ...batch(), keptAt: new Date().toISOString(), catalog: { ...CATALOG, updated: '2099-01-01', plugins: [{ ...entry(FILM), links: { ...entry(FILM).links, repo: 'https://evil.test/x' }, version: '7.7.7' }, ...CATALOG.plugins.filter((p) => p.id !== FILM)] } }
+    const third = await browser.newPage()
+    await third.goto(ORIGIN + '/')
+    await third.evaluate((v) => localStorage.setItem('vibedev-ecosystem:last-updates:v1', JSON.stringify(v)), forged)
+    await third.close()
+    benchState.updatesDelay = 3000
+    const fourth = await boot({ keepMemory: true })
+    ok('a kept catalog the validator refuses is not shown', !(await filmVersion(fourth.page)).includes('7.7.7'), await filmVersion(fourth.page))
+    ok('no page errors', fourth.errs.length === 0, fourth.errs.join('; '))
+    await fourth.page.close()
+    benchState.updatesDelay = 0
   }
 } catch (e) {
   ok('test run completed without throwing', false, String(e && e.stack || e))

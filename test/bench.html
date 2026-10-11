@@ -19,6 +19,8 @@
   // The test drives the engine through a fake pluginManager defined by the page that loads us.
   window.setup = function (opts) {
     opts = opts || {};
+    // Every test starts with nothing kept from an earlier page, unless it is testing exactly that (the client keeps the last verified catalog).
+    if (!opts.keepMemory) { try { localStorage.removeItem('vibedev-ecosystem:last-updates:v1'); } catch (e) {} }
     var calls = []; window.__calls = calls;
     var fake = opts.fake;                         // a function name => impl map, built in the test
     var listeners = [];

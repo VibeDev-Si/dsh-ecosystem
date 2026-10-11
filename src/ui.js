@@ -135,6 +135,31 @@ export function createCenter(React, catalog, host) {
   const MARKET = 'dshmarket'
   let LANG = 'zh' // set at the top of every render; icon glyphs are letters in English, characters in Chinese
 
+  /* ── what the page showed last ─────────────────────────────────────────────
+   * Opening the center must show the newest thing it knows at once. Without this it drew the catalog this
+   * client was built with, then swapped in the online one when /vdc/updates answered (2-4 s once the host's
+   * one-minute cache has expired), and offered 安装 on every card until the installed list arrived: the flash.
+   * The last successful answer is kept for the life of the page and in the host's memory (localStorage in the
+   * app), and gated by E.restoredAnswer on the way back in; the installed list is kept for the life of the
+   * page only, since an app restart is exactly when it changes. Both are replaced by the fresh reads that
+   * every opening still makes, once each, as before. */
+  const MEMORY_KEY = 'vibedev-ecosystem:last-updates:v1'
+  let lastAnswer // undefined until read; null when nothing usable was kept
+  let lastBundles = null
+  const rememberedAnswer = () => {
+    if (lastAnswer === undefined) {
+      let stored = null
+      try { const raw = host.memory?.read(MEMORY_KEY); stored = raw ? JSON.parse(raw) : null } catch { stored = null }
+      lastAnswer = E.restoredAnswer(stored, catalog)
+    }
+    return lastAnswer
+  }
+  const rememberAnswer = (answer) => {
+    if (answer?.ok !== true) return
+    lastAnswer = answer
+    try { host.memory?.write(MEMORY_KEY, JSON.stringify({ ...answer, keptAt: new Date().toISOString() })) } catch { /* the next opening reads it fresh */ }
+  }
+
   /* ── style ─────────────────────────────────────────────────────────────── */
   const CSS = `.vdc{--bg:var(--dsw-alias-bg-base,#fff);--l1:var(--dsw-alias-bg-layer-1,#f6f7f9);--l2:var(--dsw-alias-bg-layer-2,#eceef3);--ov:var(--dsw-alias-bg-overlay,#fff);
 --b1:var(--dsw-alias-border-l1,rgba(20,24,40,.09));--b2:var(--dsw-alias-border-l2,rgba(20,24,40,.18));--brand:var(--dsw-alias-brand-primary,#4d6bfe);
@@ -194,6 +219,10 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 .vdc .btn.ok:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--b1));background:color-mix(in srgb,var(--ok) 8%,var(--bg));pointer-events:none}
 .vdc .btn.warn:not(:where([data-vdc-market], [data-vdc-market] *)){background:color-mix(in srgb,var(--warn) 14%,var(--bg));border-color:color-mix(in srgb,var(--warn) 50%,var(--b1));color:var(--warn)}
 .vdc .btn.idle:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2)}
+.vdc .btn.ph:not(:where([data-vdc-market], [data-vdc-market] *)){width:76px;justify-content:center;border-color:transparent;background:var(--l2);pointer-events:none;animation:vdcph 1.2s ease-in-out infinite}
+.vdc .btn.big.ph:not(:where([data-vdc-market], [data-vdc-market] *)){width:132px}
+@keyframes vdcph{50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.vdc .btn.ph{animation:none}}
 .vdc .sec:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;align-items:baseline;gap:10px;margin:6px 0 12px;flex-wrap:wrap}
 .vdc .sec h3:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0;font-size:15px}
 .vdc .sec span:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--t2);font-size:13px}
@@ -319,7 +348,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 
   /* ── component ─────────────────────────────────────────────────────────── */
   function Center() {
-    const [releaseState, setReleaseState] = useState({ kind: 'idle', answer: null })
+    const [releaseState, setReleaseState] = useState(() => ({ kind: 'idle', answer: rememberedAnswer() }))
     const releaseRequest = useRef(null)
     const releaseLifetime = useRef(null)
     const liveCatalog = useMemo(() => E.catalogWithReleases(catalog, releaseState.answer), [releaseState.answer])
@@ -332,6 +361,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const signal = releaseLifetime.current?.signal
       const task = Promise.resolve().then(() => host.checkUpdates(signal)).catch(() => undefined)
         .then((answer) => {
+          rememberAnswer(answer)
           if (!signal?.aborted) setReleaseState((previous) => ({ kind: answer?.ok ? 'ready' : 'unavailable',
             answer: answer && (Array.isArray(answer.plugins) || answer.self) ? answer : previous.answer }))
           return answer
@@ -372,7 +402,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     // The market's own filled buttons can be unreadable on a light brand (white on #6f87ff, or on
     // anything near white): bridge only those, and put every colour back when the view or theme changes.
     const marketRef = useRef(null)
-    const [bundles, setBundles] = useState(null) // null = loading, false = unavailable
+    const [bundles, setBundles] = useState(() => lastBundles) // null = loading, false = unavailable
     const [view, setView] = useState('all')
     useEffect(() => {
       if (view !== 'community') return undefined
@@ -396,6 +426,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         const r = await E.readBundleInventory(host.pm)
         setBundles(r?.ok ? r.value : false)
         if (r?.ok) {
+          lastBundles = r.value
           tracker.current = E.trackLoadedChanges(tracker.current, r.value)
           setReplaced((old) => (old.length === tracker.current.dirty.length ? old : tracker.current.dirty))
         }
@@ -545,6 +576,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const SELF_PKG = '@vibedev-si/dsh-ecosystem'
     const copyPkg = () => { host.copy?.(SELF_PKG); setCopied(true); setTimeout(() => setCopied(false), 2000) }
     const stateBtn = (p) => {
+      // Not known yet whether it is installed: a neutral placeholder, never a 安装 that turns into 已启用.
+      if (bundles === null) return h('span', { className: 'btn ph', 'data-testid': 'state-pending', 'aria-hidden': 'true' }, '\u00a0')
       if (isProvided(p)) {
         const badge = h('span', { className: 'btn ' + (isOn(p) ? 'ok' : ''), 'data-testid': 'provided', title: E.updatableBuiltIn(have.get(p.npm)) ? S.providedUpdatable : S.providedNote }, S.provided, ' · ', isOn(p) ? S.enabled : S.disabled)
         const up = updates.find((u) => u.entry.id === p.id && u.builtIn)
@@ -597,10 +630,16 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       chips.forEach((c) => c)
       return h('div', { className: 'suite' },
         h('div', null, h('h3', null, I.star(18), ' ', L(s.name, lang)), h('p', null, L(s.tagline, lang))),
-        h('div', { className: 'r' }, todo.length
+        // Every state keeps the line under the button (blank when there is nothing to say), so the box keeps its
+        // height when the installed list arrives and nothing below it moves.
+        h('div', { className: 'r' }, bundles === null
+          ? [h('span', { key: 'b', className: 'btn big ph', 'data-testid': 'state-pending', 'aria-hidden': 'true' }, '\u00a0'),
+            h('small', { key: 's', 'aria-hidden': 'true' }, '\u00a0')]
+          : todo.length
           ? [h('button', { key: 'b', className: 'btn primary big', disabled: !host.pm || bundles === false, onClick: () => openInstall(s.items, `${S.install} ${L(s.name, lang)}`) }, I.down(), ' ', S.suiteInstall),
             h('small', { key: 's' }, S.suiteWill(todo.length, items.length - todo.length, filmish ? '~12 MB' : S.sizeSmall))]
-          : h('span', { className: 'btn ok big' }, I.check(), ' ', S.suiteDone)),
+          : [h('span', { key: 'b', className: 'btn ok big' }, I.check(), ' ', S.suiteDone),
+            h('small', { key: 's', 'aria-hidden': 'true' }, '\u00a0')]),
         h('div', { className: 'chips' }, chips))
     }
 

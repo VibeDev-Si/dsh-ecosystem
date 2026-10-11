@@ -529,6 +529,36 @@ export function catalogWithReleases(catalog, answer) {
   }) }
 }
 
+/** How long an answer kept from an earlier visit may still be shown while the next check runs. */
+export const KEPT_ANSWER_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * A /vdc/updates answer kept from an earlier visit, made fit to show the moment the center opens — so the page
+ * starts on the newest catalog it knows instead of the copy this client was built with, and does not change
+ * under the user a few seconds later. It must be a successful answer, at most 30 days old, whose catalog is not
+ * older than the shipped one (an app update since then wins) and passes the validator. It is relabelled as a
+ * cached listing: it never counts as checked just now, and everything in it still goes through
+ * catalogWithReleases, which re-checks the catalog and every release.
+ * @param stored - what was kept, parsed; anything else is refused.
+ * @param bundled - the catalog this client ships.
+ * @param now - the clock.
+ * @returns the answer to start from, or null.
+ */
+export function restoredAnswer(stored, bundled, now = Date.now()) {
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored) || stored.ok !== true) return null
+  if (!Array.isArray(stored.plugins) && !(stored.self && typeof stored.self === 'object')) return null
+  // Age from when this client kept it (its own clock), else from when the host checked.
+  const keptAt = Date.parse(stored.keptAt ?? stored.checkedAt)
+  if (!Number.isFinite(keptAt) || now - keptAt > KEPT_ANSWER_MAX_AGE_MS) return null
+  if (stored.catalog !== undefined) {
+    const updated = stored.catalog?.updated
+    if (typeof updated !== 'string' || updated < String(bundled?.updated ?? '')) return null
+    if (!validateCatalog(stored.catalog).ok) return null
+  }
+  const { catalogError: _error, catalogStale: _stale, cached: _cached, keptAt: _keptAt, ...kept } = stored
+  return { ...kept, catalogSource: 'cached', restored: true }
+}
+
 /** A completed check may claim current versions only when every fixed VibeDev package and self answered. */
 export function releasesComplete(catalog, answer) {
   if (answer?.ok !== true || answer.self?.ok !== true || answer.self.registry !== 'https://registry.npmjs.org/'

@@ -89,7 +89,7 @@ export function createFakePm(initial = [], scenarios = {}, options = {}) {
       bundles.delete(name)
       return ok({ changed: true, application: 'applied', stage: 'remove', target: name })
     },
-    async listBundles() { calls.push(['listBundles']); return ok([...bundles.values()].map((b) => ({ ...b, optional: b.optional ?? false, removable: b.removable ?? true, rows: b.rows ?? [], overrides: [] }))) },
+    async listBundles() { calls.push(['listBundles']); if (options.listDelay) await new Promise((r) => setTimeout(r, options.listDelay)); return ok([...bundles.values()].map((b) => ({ ...b, optional: b.optional ?? false, removable: b.removable ?? true, rows: b.rows ?? [], overrides: [] }))) },
     async listPlugins() {
       calls.push(['listPlugins'])
       return ok([...bundles.values()].flatMap((b) => (b.rows ?? []).filter((r) => r.entryId).map((r) => ({

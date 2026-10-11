@@ -117,6 +117,11 @@ function apply(ctx) {
         .catch(function () { return undefined; })
         .then(function (v) { if (timer) clearTimeout(timer); return v; });
     },
+    // The last verified catalog, kept so the next opening shows it at once (ui.js "what the page showed last").
+    memory: {
+      read: function (key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } },
+      write: function (key, value) { try { window.localStorage.setItem(key, value); } catch (e) {} },
+    },
     // Read the four fixed VibeDev releases when this panel opens or the user checks again. The host caches successes.
     checkUpdates: function (signal) {
       var ctl = new AbortController();

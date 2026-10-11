@@ -745,4 +745,43 @@ await t('a host without `application` keeps the old rule: provided packages are 
   const row = E.markInstalled([by(VD)], bundles)[0]
   assert.equal((await E.installOne(pm, by(VD), { ...row, update: true }, { update: true })).failure.kind, 'provided')
 })
+// ── what the page showed last ───────────────────────────────────────────────
+// Opening the center must show the newest catalog it knows at once, instead of the copy this client was built
+// with and then the online one seconds later. The answer kept from an earlier visit goes through this gate.
+const NOW = Date.parse('2026-10-11T12:00:00Z')
+const kept = (extra = {}) => ({
+  ok: true, checkedAt: '2026-10-11T11:00:00.000Z', catalogSource: 'online',
+  catalog: { ...catalog, updated: catalog.updated },
+  plugins: [{ name: VD, ok: true, version: '9.9.0', publishedAt: '2026-10-11T10:00:00.000Z', registry: 'https://registry.npmjs.org/' }],
+  self: { ok: true, latest: '0.1.13', publishedAt: '2026-10-10T00:00:00.000Z', registry: 'https://registry.npmjs.org/' },
+  ...extra,
+})
+await t('last answer: a kept answer is shown again, as a cached listing, never as checked just now', () => {
+  const restored = E.restoredAnswer(kept(), catalog, NOW)
+  assert.equal(restored.catalogSource, 'cached')
+  assert.equal(restored.restored, true)
+  assert.equal(E.catalogWithReleases(catalog, restored).plugins.find((p) => p.npm === VD).version, '9.9.0')
+})
+await t('last answer: nothing kept, a failed check, or a broken payload is never used', () => {
+  for (const bad of [undefined, null, 'x', {}, kept({ ok: false }), kept({ plugins: 'x', self: undefined }), kept({ checkedAt: 'later' })]) {
+    assert.equal(E.restoredAnswer(bad, catalog, NOW), null, JSON.stringify(bad)?.slice(0, 60))
+  }
+})
+await t('last answer: a catalog older than the one this client ships is dropped (the app was updated since)', () => {
+  assert.equal(E.restoredAnswer(kept({ catalog: { ...catalog, updated: '2020-01-01' } }), catalog, NOW), null)
+})
+await t('last answer: a catalog the validator refuses is dropped, so the snapshot stands', () => {
+  const forged = { ...catalog, plugins: [{ ...catalog.plugins[0], links: { ...catalog.plugins[0].links, repo: 'https://evil.test/x' } }, ...catalog.plugins.slice(1)] }
+  assert.equal(E.restoredAnswer(kept({ catalog: forged }), catalog, NOW), null)
+})
+await t('last answer: an answer older than 30 days is not shown', () => {
+  assert.equal(E.restoredAnswer(kept({ checkedAt: '2026-09-01T00:00:00.000Z' }), catalog, NOW), null)
+  assert.notEqual(E.restoredAnswer(kept({ checkedAt: '2026-09-20T00:00:00.000Z' }), catalog, NOW), null)
+})
+await t('last answer: its age is counted from when this client kept it, and the stamp is not passed on', () => {
+  const restored = E.restoredAnswer(kept({ checkedAt: '2026-01-01T00:00:00.000Z', keptAt: '2026-10-10T00:00:00.000Z' }), catalog, NOW)
+  assert.notEqual(restored, null)
+  assert.equal('keptAt' in restored, false)
+  assert.equal(E.restoredAnswer(kept({ keptAt: '2026-08-01T00:00:00.000Z' }), catalog, NOW), null)
+})
 console.log(`\n${n} engine tests passed`)
