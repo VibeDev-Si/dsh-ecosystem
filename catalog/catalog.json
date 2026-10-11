@@ -16,31 +16,33 @@
     {
       "id": "@vibedev-si/dsh-vibedev",
       "npm": "@vibedev-si/dsh-vibedev",
-      "version": "0.2.5",
-      "publishedAt": "2026-10-06T17:26:07.523Z",
+      "version": "0.3.2",
+      "publishedAt": "2026-10-11T11:16:04.099Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
       "name": { "zh": "VibeDev 账号与模型", "en": "VibeDev Account & Models" },
       "tagline": {
-        "zh": "登录 VibeDev 账号，和 DeepSeek 账号并存：用网关的 Claude、GPT 等模型，并让 Agent 生成图片、视频和音频",
-        "en": "Sign in to VibeDev next to your DeepSeek account: use the gateway's Claude, GPT and other models, and let the agent generate images, video and audio"
+        "zh": "登录 VibeDev 账号，和 DeepSeek 账号并存：用网关的 Claude、GPT 等模型，并让 Agent 生成图片、视频、音乐、播客和语音",
+        "en": "Sign in to VibeDev next to your DeepSeek account: use the gateway's Claude, GPT and other models, and let the agent generate images, video, music, podcasts and speech"
       },
       "does": {
         "zh": [
           "在侧边栏底部或「设置 → VibeDev 账号」登录，查看余额、充值；和 DeepSeek 账号互不影响",
+          "余额实时更新：对话、生成、转写扣费后几秒内就能看到",
           "登录后模型选择器里多出「VibeDev」一组（Claude、GPT 等），未登录时不显示",
           "生成图片；带参考图时可改图、换风格",
           "生成视频（后台运行，一般 1–10 分钟）",
-          "生成音乐（可自带歌词）或一期播客；把语音转成文字（目前只支持普通话）",
+          "生成音乐（可自带歌词）、播客和语音（可用参考音色）；音频模型按网关声明的能力识别；把语音转成文字",
           "原名 dsh-media：已安装的会在这里一键切换，登录和进行中的任务都保留"
         ],
         "en": [
           "Sign in at the bottom of the sidebar or in Settings → VibeDev account, see the balance and top up; the DeepSeek account is not affected",
+          "Live balance: a charge from a chat, a generation or a transcription shows within seconds",
           "Once signed in, the model picker gains a \"VibeDev\" group (Claude, GPT and more); nothing is listed while signed out",
           "Generate images; edit or restyle with reference images",
           "Generate video (runs in the background, usually 1-10 minutes)",
-          "Generate music (with your own lyrics) or a podcast episode; transcribe speech (Mandarin only for now)",
+          "Generate music (with your own lyrics), podcasts and speech (with reference voices); audio models are recognized from what the gateway declares; transcribe speech",
           "Formerly dsh-media: an installed copy is switched over here in one click, keeping the sign-in and running tasks"
         ]
       },
@@ -48,13 +50,13 @@
       "requires": [],
       "partners": ["dsh-film", "@vibedev-si/dsh-media-viewer"],
       "legacyNames": ["dsh-media"],
-      "sizeKB": 1559,
+      "sizeKB": 1664,
       "capabilities": [
         { "key": "network", "text": { "zh": "发给 VibeDev 模型的对话、提示词和参考素材会发送到 VibeDev 网关，再转交模型服务商", "en": "Conversations with VibeDev models, prompts and reference media are sent to the VibeDev gateway, which forwards them to the model provider" } },
         { "key": "credentials", "text": { "zh": "在系统浏览器里登录 VibeDev，插件拿不到密码；登录凭据存在 DeepSeek Harness 的凭据存储里。在 VibeDev 应用里直接用已登录的账号", "en": "You sign in to VibeDev in your system browser and the plugin never sees the password; the sign-in is kept in DeepSeek Harness's credential store. Inside the VibeDev app the app's account is used" } },
         { "key": "writeFiles", "text": { "zh": "生成结果保存在工作区的 media/ 目录", "en": "Results are saved under media/ in the workspace" } },
         { "key": "agentTools", "text": { "zh": "为 Agent 增加 7 个媒体工具和简短说明", "en": "Adds 7 media tools and a short guide for the agent" } },
-        { "key": "cost", "text": { "zh": "VibeDev 模型按用量计费；图片按张、视频按秒、音乐和播客按次计费；视频和音频失败不扣费，提交后的视频无法取消", "en": "VibeDev models are billed by usage; images per image, video per second, music and podcasts per request; failed video/audio is not charged and a submitted video cannot be cancelled" } }
+        { "key": "cost", "text": { "zh": "VibeDev 模型按用量计费；图片按张、视频按秒或按次、音乐和播客按次、语音按原始秒、转写按分钟计费，没有价格的显示「未定价」；失败和取消的任务不扣费，提交后的视频无法取消", "en": "VibeDev models are billed by usage; images per image, video per second or per generation, music and podcasts per request, speech per second of original audio, transcription per minute, \"not priced\" when no price is stated; failed and cancelled tasks are not charged and a submitted video cannot be cancelled" } }
       ],
       "links": { "repo": "https://github.com/VibeDev-Si/dsh-vibedev", "npm": "https://www.npmjs.com/package/@vibedev-si/dsh-vibedev" },
       "cmd": "dsh plugin add @vibedev-si/dsh-vibedev",
