@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startBench, state as benchState } from './bench-server.mjs'
+import { fmtSize } from '../src/strings.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const SHOTS = process.env.SHOTS ?? join(here, '..', 'shots')
@@ -96,6 +97,9 @@ try {
     ok('...and clicking it explains what this is', (await text(page)).includes('VibeDev 团队出品的插件'))
     ok('shows 3 official cards + 1 companion (the community market; no third-party prerequisite)', (await page.evaluate(() => document.querySelectorAll('.card').length)) === 4)
     ok('the suite installs our three plugins (Better Sidebar is no longer part of it)', t.includes('将安装 3 个插件（已装 0 个）'))
+    // The size is what those plugins weigh in the catalog, not a fixed guess (it said ~12 MB while the film workbench alone was 46 MB).
+    const suiteKB = CATALOG.suites[0].items.reduce((sum, id) => sum + CATALOG.plugins.find((p) => p.id === id).sizeKB, 0)
+    ok('the suite says how much it installs, from the catalog sizes', t.includes(`将安装 3 个插件（已装 0 个）· ${fmtSize(suiteKB)}`), `expected ${fmtSize(suiteKB)}`)
     ok('account + billing is visible on the card', t.includes('需要 VibeDev 账号') && t.includes('按用量计费'))
     ok('community plugins are labelled as such', (await page.evaluate(() => [...document.querySelectorAll('.card[data-id=dshmarket] .tag')].map((x) => x.textContent))).includes('DSH 社区市场插件'))
     await shot(page, '01-home'); await page.close()

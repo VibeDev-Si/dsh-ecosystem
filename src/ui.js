@@ -621,7 +621,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       if (!s) return null
       const items = (s.items ?? []).map(byId).filter(Boolean)
       const todo = items.filter((p) => !isIn(p) || !isOn(p) || isProvided(p) && legacy.some((x) => x.entry.id === p.id))
-      const filmish = todo.some((p) => p.sizeKB > 10000)
+      // What the plugins still to install weigh in the catalog (it used to say a fixed ~12 MB).
+      const todoKB = todo.reduce((sum, p) => sum + (Number.isFinite(p.sizeKB) ? p.sizeKB : 0), 0)
       const chips = []
       items.forEach((p, i) => {
         if (i) chips.push(h('span', { className: 'arrow', key: 'a' + i }, I.arrow()))
@@ -637,7 +638,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
             h('small', { key: 's', 'aria-hidden': 'true' }, '\u00a0')]
           : todo.length
           ? [h('button', { key: 'b', className: 'btn primary big', disabled: !host.pm || bundles === false, onClick: () => openInstall(s.items, `${S.install} ${L(s.name, lang)}`) }, I.down(), ' ', S.suiteInstall),
-            h('small', { key: 's' }, S.suiteWill(todo.length, items.length - todo.length, filmish ? '~12 MB' : S.sizeSmall))]
+            h('small', { key: 's' }, S.suiteWill(todo.length, items.length - todo.length, todoKB < 1024 ? S.sizeSmall : fmtSize(todoKB)))]
           : [h('span', { key: 'b', className: 'btn ok big' }, I.check(), ' ', S.suiteDone),
             h('small', { key: 's', 'aria-hidden': 'true' }, '\u00a0')]),
         h('div', { className: 'chips' }, chips))
