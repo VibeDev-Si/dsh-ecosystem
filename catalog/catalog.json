@@ -67,8 +67,8 @@
     {
       "id": "dsh-film",
       "npm": "dsh-film",
-      "version": "0.5.2",
-      "publishedAt": "2026-10-11T11:54:55.949Z",
+      "version": "0.5.3",
+      "publishedAt": "2026-10-11T12:15:34.253Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
@@ -99,7 +99,7 @@
       "requires": ["@vibedev-si/dsh-vibedev"],
       "partners": ["@vibedev-si/dsh-vibedev", "@vibedev-si/dsh-media-viewer"],
       "legacyNames": ["dsh-film-studio"],
-      "sizeKB": 47029,
+      "sizeKB": 47030,
       "capabilities": [
         { "key": "writeFiles", "text": { "zh": "项目保存在工作区的「VibeDev Film」文件夹，生成结果在项目的 assets/ 下；升级和卸载插件不会改动它们", "en": "Projects are kept in the workspace's \"VibeDev Film\" folder and results under the project's assets/; upgrading or removing the plugin does not touch them" } },
         { "key": "localRoute", "text": { "zh": "在本机回环地址上运行工作台服务，只接受本插件签发的会话", "en": "Runs the workbench server on a loopback address, accepting only sessions this plugin issues" } },
