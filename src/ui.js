@@ -414,6 +414,11 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const selfRelease = E.judgeSelfUpdate(host.version?.() ?? '0.0.0', releaseState.answer?.self)
     // This center itself ships with the app (VibeDev Next marks it official; any app shows it as not removable).
     const selfBuiltIn = host.official?.() === true || E.providedByApp(have.get('@vibedev-si/dsh-ecosystem'))
+    // A host that can update app-owned packages reports both copies of this center (see E.applicationCopy).
+    const selfCopy = E.applicationCopy(have.get('@vibedev-si/dsh-ecosystem'))
+    const selfRunning = host.version?.() ?? '0.0.0'
+    /** An update of this center already installed, waiting for VibeDev Next to restart. */
+    const selfPending = selfCopy?.selected === 'profile' && !!selfCopy.local && E.compareSemver(selfCopy.local, selfRunning) > 0 ? selfCopy.local : null
     const fullyChecked = releaseState.kind === 'ready' && E.releasesComplete(liveCatalog, releaseState.answer)
     const legacy = useMemo(() => (bundles ? E.legacyInstalled(liveCatalog, bundles) : []), [bundles, liveCatalog])
 
@@ -469,7 +474,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         if (!first) { run.waiting = true; upd(); await E.waitQuiet(host.onChanged, between); run.waiting = false }
         first = false
         run.cur = row; row.st = 'run'; row.sub = S.stInspect; upd()
-        const state = update ? { installed: true, enabled: row.enabled, provided: row.provided } : row
+        const state = update ? { installed: true, enabled: row.enabled, provided: row.provided, updatable: row.updatable } : row
         const r = await E.installOne(host.pm, row.entry, state, {
           update,
           registry: update || row.entry.usesLiveVersion ? row.entry.registry ?? registry : registry,
@@ -519,6 +524,15 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       setModal({ mode: 'uninstall', p, result: r })
     }
     const toggle = async (p, on) => { setMenu(null); const r = await host.pm.setBundleEnabled(p.npm, on); await refresh(); return r }
+    /** Update an app-owned package in place, or return it to the copy shipped with the app; both apply at the next start. */
+    const doBuiltIn = async (action, name, version, registry = null) => {
+      setDrawer(null); setMenu(null)
+      setModal({ mode: 'builtin', action, name, version, phase: 'run' })
+      const chosen = action === 'update' ? registry ?? (await host.chooseRegistry?.()) ?? null : null
+      const r = action === 'update' ? await E.updateBuiltIn(host.pm, name, version, { registry: chosen }) : await E.restoreBuiltIn(host.pm, name)
+      await refresh()
+      setModal({ mode: 'builtin', action, name, version, phase: 'done', result: r })
+    }
 
     /* ── pieces ──────────────────────────────────────────────────────────── */
     // "Is there a newer center?": one read of npm, made by the host half, only when the user clicks.
@@ -531,7 +545,13 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const SELF_PKG = '@vibedev-si/dsh-ecosystem'
     const copyPkg = () => { host.copy?.(SELF_PKG); setCopied(true); setTimeout(() => setCopied(false), 2000) }
     const stateBtn = (p) => {
-      if (isProvided(p)) return h('span', { className: 'btn ' + (isOn(p) ? 'ok' : ''), 'data-testid': 'provided', title: S.providedNote }, S.provided, ' · ', isOn(p) ? S.enabled : S.disabled)
+      if (isProvided(p)) {
+        const badge = h('span', { className: 'btn ' + (isOn(p) ? 'ok' : ''), 'data-testid': 'provided', title: E.updatableBuiltIn(have.get(p.npm)) ? S.providedUpdatable : S.providedNote }, S.provided, ' · ', isOn(p) ? S.enabled : S.disabled)
+        const up = updates.find((u) => u.entry.id === p.id && u.builtIn)
+        if (!up) return badge
+        return h('span', { className: 'acts' },
+          h('button', { className: 'btn warn', 'data-testid': 'update-built-in', onClick: (e) => { e.stopPropagation(); openInstall([p.id], `${S.updateTo(up.to)}`, { update: true }) } }, I.down(), ' ', S.updateTo(up.to)), badge)
+      }
       if (isIn(p)) {
         const on = isOn(p)
         const up = updates.find((u) => u.entry.id === p.id)
@@ -598,11 +618,20 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const close = h('button', { className: 'x', key: 'x', title: S.dismiss, onClick: () => setSelfUpd(null) }, '\u00d7')
       const at = (d) => d.toLocaleString()
       if (selfUpd.kind === 'checking') return h('div', { className: 'note', 'data-testid': 'self-update', 'data-kind': 'checking', style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 } }, h('span', { className: 'spin' }), S.checking)
-      if (selfUpd.kind === 'same' || selfUpd.kind === 'ahead') return h('div', { className: 'res ok', 'data-testid': 'self-update', 'data-kind': selfUpd.kind }, I.ok(), h('div', { style: { flex: 1 } }, h('span', null, selfUpd.kind === 'same' ? S.selfOk(cur) : S.selfAhead(cur, selfUpd.latest))), close)
+      if (selfUpd.kind === 'same' || selfUpd.kind === 'ahead') return h('div', { className: 'res ok', 'data-testid': 'self-update', 'data-kind': selfUpd.kind }, I.ok(), h('div', { style: { flex: 1 } }, h('span', null, selfUpd.kind === 'same' ? S.selfOk(cur) : S.selfAhead(cur, selfUpd.latest)),
+        // Running an update of this center: the copy shipped with the app is one click away.
+        selfCopy?.selected === 'profile' && selfCopy.shipped && h('div', { style: { display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' } },
+          h('span', null, S.builtInUpdated(selfCopy.local, selfCopy.shipped)),
+          h('button', { className: 'btn sm', 'data-testid': 'restore-self', disabled: !host.pm, onClick: () => doBuiltIn('restore', SELF_PKG, selfCopy.shipped) }, S.restoreBuiltIn(selfCopy.shipped)))), close)
       if (selfUpd.kind === 'unavailable') {
         const list = (selfUpd.sources || []).map((s) => { let host0 = s.registry; try { host0 = new URL(s.registry).host } catch { /* keep as is */ } return `${host0} (${s.error})` }).join(', ')
         return h('div', { className: 'res warn', 'data-testid': 'self-update', 'data-kind': 'unavailable' }, I.warn(), h('div', { style: { flex: 1 } }, h('b', null, S.selfFailT), h('span', null, S.selfFailB(list))), close)
       }
+      // Built into an app that can update it in place: one click, effective after a restart.
+      if (selfBuiltIn && selfCopy) return h('div', { className: 'res ok', 'data-testid': 'self-update', 'data-kind': 'newer-updatable' }, I.ok(), h('div', { style: { flex: 1 } },
+        h('b', null, S.selfNewT(selfUpd.latest, cur)), h('span', null, selfPending ? S.builtInPending(selfPending) : S.selfUpdatable),
+        !selfPending && h('div', { style: { display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' } },
+          h('button', { className: 'btn primary sm', 'data-testid': 'update-self', disabled: !host.pm, onClick: () => doBuiltIn('update', SELF_PKG, selfUpd.latest) }, S.updateTo(selfUpd.latest)))), close)
       // Built into the app: a newer center comes with the next app release; there is nothing to reinstall.
       if (selfBuiltIn) return h('div', { className: 'res ok', 'data-testid': 'self-update', 'data-kind': 'newer-built-in' }, I.ok(), h('div', { style: { flex: 1 } },
         h('b', null, S.selfNewT(selfUpd.latest, cur)), h('span', null, S.selfBuiltIn)), close)
@@ -641,7 +670,13 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     }
 
     const ReleaseRows = () => [
-      selfRelease.kind === 'newer' && selfBuiltIn && h('article', { className: 'card', key: 'self', 'data-testid': 'self-update-row', 'data-built-in': '' },
+      selfRelease.kind === 'newer' && selfBuiltIn && selfCopy && h('article', { className: 'card', key: 'self', 'data-testid': 'self-update-row', 'data-built-in': '', 'data-updatable': '' },
+        h('h3', null, S.title), h('div', { className: 'sub' }, `${SELF_PKG} · ${host.version?.() ?? ''} → ${selfRelease.latest}`),
+        h('p', null, selfPending ? S.builtInPending(selfPending) : S.selfUpdatable),
+        h('div', { className: 'cfoot' }, h('span', { className: 'tag' }, S.provided),
+          !selfPending && h('button', { className: 'btn warn', 'data-testid': 'update-self-row', disabled: !host.pm,
+            onClick: () => doBuiltIn('update', SELF_PKG, selfRelease.latest, releaseState.answer?.self?.registry ?? null) }, I.down(), ' ', S.updateTo(selfRelease.latest)))),
+      selfRelease.kind === 'newer' && selfBuiltIn && !selfCopy && h('article', { className: 'card', key: 'self', 'data-testid': 'self-update-row', 'data-built-in': '' },
         h('h3', null, S.title), h('div', { className: 'sub' }, `${SELF_PKG} · ${host.version?.() ?? ''} → ${selfRelease.latest}`),
         h('p', null, S.selfBuiltIn), h('span', { className: 'tag' }, S.provided)),
       selfRelease.kind === 'newer' && !selfBuiltIn && h('article', { className: 'card', key: 'self', 'data-testid': 'self-update-row' },
@@ -705,11 +740,22 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
               h('dt', null, S.source), h('dd', null, p.origin === 'official' ? S.officialSrc : S.communitySrc(p.author)),
               h('dt', null, S.review), h('dd', null, p.origin === 'official' ? S.officialReview : p.reviewed ? S.reviewedBy(p.reviewed.tested.join(', '), p.reviewed.date) : S.notReviewed),
               p.compat ? [h('dt', { key: 'a' }, S.compat), h('dd', { key: 'b' }, `${S.compatS[p.compat.s]}: ${L(p.compat.why, lang)}`)] : null),
-            h('h4', null, isProvided(p) ? S.provided : S.manualH), isProvided(p) ? h('div', { className: 'note', 'data-testid': 'provided-note' }, S.providedNote) : [h('pre', { className: 'cmd', key: 'cmd' }, p.cmd), h('div', { className: 'note', key: 'note' }, S.manualNote)],
+            h('h4', null, isProvided(p) ? S.provided : S.manualH), isProvided(p) ? BuiltInNote(p) : [h('pre', { className: 'cmd', key: 'cmd' }, p.cmd), h('div', { className: 'note', key: 'note' }, S.manualNote)],
             h('div', { className: 'links' }, h('button', { onClick: () => host.openUrl?.(p.links.repo) }, S.repo), h('button', { onClick: () => host.openUrl?.(p.links.npm) }, S.npm), !isProvided(p) && h('button', { onClick: () => host.copy?.(p.cmd) }, S.copyCmd))),
           h('div', { className: 'dfoot' }, h('div', { className: 'grow' }, isProvided(p) ? S.provided : isIn(p) ? (isOn(p) ? S.enabled : S.disabled) : m.length ? S.willInstall : ''), isIn(p) ? h('button', { className: 'btn', disabled: true }, isProvided(p) ? S.provided : isOn(p) ? S.enabled : S.disabled)
             : h('button', { className: 'btn primary big', disabled: !host.pm, onClick: () => openInstall([p.id], `${S.install} ${L(p.name, lang)}`) }, I.down(), ' ', m.length ? S.installWithDeps : S.install))),
       ]
+    }
+    /** What the detail says about an app-owned plugin: how it updates, and the way back to the shipped copy. */
+    const BuiltInNote = (p) => {
+      const b = have.get(p.npm)
+      const copy = E.applicationCopy(b)
+      if (!copy) return h('div', { className: 'note', 'data-testid': 'provided-note' }, S.providedNote)
+      const updated = copy.selected === 'profile' && copy.local && copy.shipped
+      return h('div', { className: 'note', 'data-testid': 'provided-note', 'data-updatable': '' }, S.providedUpdatable,
+        updated && h('div', { style: { display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' } },
+          h('span', { 'data-testid': 'built-in-updated' }, S.builtInUpdated(copy.local, copy.shipped)),
+          h('button', { className: 'btn sm', 'data-testid': 'restore-built-in', disabled: !host.pm, onClick: () => doBuiltIn('restore', p.npm, copy.shipped) }, S.restoreBuiltIn(copy.shipped))))
     }
     const capLabel = (k, lg) => ({
       network: lg === 'zh' ? '联网' : 'Network', writeFiles: lg === 'zh' ? '写入文件' : 'Writes files', readFiles: lg === 'zh' ? '读取文件' : 'Reads files', credentials: lg === 'zh' ? '凭据' : 'Credentials',
@@ -852,7 +898,22 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
           h('button', { className: 'btn primary big', onClick: async () => { setModal(null); await doUninstall(p) } }, S.retryUninstall))]
     }
 
-    const modalBody = !modal ? null : modal.mode === 'confirm' ? Confirm() : modal.mode === 'run' ? Run() : modal.mode === 'result' ? Result() : modal.mode === 'migrate' ? Migrate() : UninstallResult()
+    /** Updating an app-owned package in place, or returning it to the shipped copy. */
+    const BuiltIn = () => {
+      const { action, version, phase, result } = modal
+      const update = action === 'update'
+      if (phase === 'run') return [h('div', { className: 'mh', key: 'h' }, h('h2', null, update ? S.builtInRunUpdate(version) : S.builtInRunRestore)),
+        h('div', { className: 'mb', key: 'b' }, h('div', { className: 'note', style: { display: 'flex', gap: 8, alignItems: 'center' } }, h('span', { className: 'spin' }), update ? S.updateKeeps : S.builtInRunRestore))]
+      const ok = result.status === 'restart'
+      const [t, b, tone] = ok ? [update ? S.builtInDoneUpdateT(version) : S.builtInDoneRestoreT(version), S.builtInDoneB, 'warn']
+        : result.status === 'cancelled' ? [S.cancelInstall, '', 'warn'] : failText(result.failure || { kind: 'failed' })
+      return [h('div', { className: 'mh', key: 'h' }, h('h2', null, ok ? S.restartTitle : S.failTitle)),
+        h('div', { className: 'mb', key: 'b' }, h('div', { className: 'res ' + tone, 'data-testid': 'built-in-result', 'data-status': result.status, 'data-kind': result.failure?.kind ?? '' },
+          tone === 'err' ? I.err() : I.warn(), h('div', null, h('b', null, t), h('span', null, b)))),
+        h('div', { className: 'mf', key: 'f' }, h('button', { className: 'btn primary big', 'data-testid': 'built-in-done', onClick: () => setModal(null) }, S.gotIt))]
+    }
+
+    const modalBody = !modal ? null : modal.mode === 'confirm' ? Confirm() : modal.mode === 'run' ? Run() : modal.mode === 'result' ? Result() : modal.mode === 'migrate' ? Migrate() : modal.mode === 'builtin' ? BuiltIn() : UninstallResult()
 
     const counts = { inst: official.filter(isIn).length, upd: updates.length + appUpdates.length + (selfRelease.kind === 'newer' ? 1 : 0) }
     return h('div', { className: 'vdc', ref: rootRef, 'data-testid': 'center', onClick: () => menu && setMenu(null) },

@@ -689,4 +689,60 @@ await t('invalid online listing cannot add arbitrary packages and falls back to 
   const answer = releaseAnswer(); answer.catalog = online
   assert.deepEqual(E.catalogWithReleases(catalog, answer).plugins.map(p => p.npm), catalog.plugins.map(p => p.npm))
 })
+
+// ── app-owned packages a host updates in place (VibeDev Next reports `application`) ────────────────────────────
+const updatableAccount = (application, extra = {}) => suppliedAccount({ version: application.selected === 'profile' ? application.local : application.shipped,
+  installed: application.local !== undefined, removable: application.local !== undefined, application, ...extra })
+await t('updatable built-in: still provided (never a second install), and offered as a builtIn update when the catalog is newer', async () => {
+  const pm = createFakePm([updatableAccount({ shipped: '0.0.1', selected: 'installation' })])
+  const bundles = await inventoryOf(pm)
+  const b = bundles.find(x => x.name === VD)
+  assert.equal(E.providedByApp(b), true); assert.equal(E.updatableBuiltIn(b), true); assert.equal(E.runsUpdatedCopy(b), false)
+  assert.deepEqual(E.pendingUpdates(catalog, bundles).map(u => [u.entry.id, u.from, u.to, u.builtIn]), [[VD, '0.0.1', by(VD).version, true]])
+  assert.deepEqual(E.appReleaseUpdates(catalog, bundles), [], 'an updatable host lists it as a real update, not "comes with the app"')
+  const rows = E.markInstalled([by(VD)], bundles)
+  assert.equal(rows[0].provided, true); assert.equal(rows[0].updatable, true)
+})
+await t('updatable built-in: an update installs the exact version unselected and reports a restart; nothing is enabled', async () => {
+  const pm = createFakePm([updatableAccount({ shipped: '0.0.1', selected: 'installation' })])
+  const row = E.markInstalled([by(VD)], await inventoryOf(pm))[0]
+  const r = await E.installOne(pm, by(VD), { ...row, update: true }, { update: true })
+  assert.equal(r.status, 'restart'); assert.equal(r.builtIn, true)
+  const inst = pm.calls.find(c => c[0] === 'installBundle')
+  assert.equal(inst[1], E.specOf(by(VD))); assert.equal(inst[2].enabled, false); assert.equal(inst[2].saveExact, true)
+  assert.ok(!pm.calls.some(c => c[0] === 'setBundleEnabled'), 'the app layers run it; nothing is selected')
+  const after = (await inventoryOf(pm)).find(x => x.name === VD)
+  assert.equal(E.runsUpdatedCopy(after), true); assert.equal(after.version, by(VD).version)
+  assert.deepEqual(E.pendingUpdates(catalog, await inventoryOf(pm)), [])
+})
+await t('updatable built-in: a version the host will not take (not newer than shipped) fails as refused, installing nothing', async () => {
+  const pm = createFakePm([updatableAccount({ shipped: '9.0.0', selected: 'installation' })])
+  const r = await E.updateBuiltIn(pm, VD, '1.0.0')
+  assert.equal(r.status, 'failed'); assert.equal(r.failure.kind, 'refused')
+  assert.ok(!pm.calls.some(c => c[0] === 'installBundle'))
+})
+await t('updatable built-in: restore removes only the profile copy and reports a restart; uninstall stays refused', async () => {
+  const pm = createFakePm([updatableAccount({ shipped: '0.0.1', local: '0.0.2', selected: 'profile' })])
+  assert.equal((await E.uninstall(pm, by(VD))).failure.kind, 'provided')
+  const r = await E.restoreBuiltIn(pm, VD)
+  assert.equal(r.status, 'restart')
+  const after = (await inventoryOf(pm)).find(x => x.name === VD)
+  assert.equal(E.runsUpdatedCopy(after), false); assert.equal(after.version, '0.0.1'); assert.equal(E.providedByApp(after), true)
+  assert.equal((await E.restoreBuiltIn(pm, VD)).status, 'failed', 'nothing left to remove')
+})
+await t('updatable built-in: the center updates itself the same way (its own name, the npm version)', async () => {
+  const pm = createFakePm([{ name: '@vibedev-si/dsh-ecosystem', version: '0.1.12', installed: false, enabled: false, removable: false, application: { shipped: '0.1.12', selected: 'installation' } }])
+  const r = await E.updateBuiltIn(pm, '@vibedev-si/dsh-ecosystem', '0.1.13', { registry: 'https://registry.npmjs.org/' })
+  assert.equal(r.status, 'restart')
+  assert.deepEqual(pm.calls.filter(c => c[0] !== 'listBundles').map(c => [c[0], c[1]]), [['inspect', '@vibedev-si/dsh-ecosystem@0.1.13'], ['installBundle', '@vibedev-si/dsh-ecosystem@0.1.13']])
+  assert.equal(pm.calls.find(c => c[0] === 'installBundle')[2].registry, 'https://registry.npmjs.org/')
+})
+await t('a host without `application` keeps the old rule: provided packages are never updated from here', async () => {
+  const pm = createFakePm([suppliedAccount({ version: '0.0.1' })])
+  const bundles = await inventoryOf(pm)
+  assert.deepEqual(E.pendingUpdates(catalog, bundles), [])
+  assert.deepEqual(E.appReleaseUpdates(catalog, bundles).map(u => u.entry.id), [VD])
+  const row = E.markInstalled([by(VD)], bundles)[0]
+  assert.equal((await E.installOne(pm, by(VD), { ...row, update: true }, { update: true })).failure.kind, 'provided')
+})
 console.log(`\n${n} engine tests passed`)

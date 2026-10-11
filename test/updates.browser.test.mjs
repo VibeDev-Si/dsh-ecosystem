@@ -238,6 +238,58 @@ try {
     ok('no page errors', errs.length === 0, errs.join('; '))
     await page.close()
   }
+  // 20 ── a host that updates app-owned packages in place (VibeDev Next reports `application`)
+  const owned = (name, application, extra = {}) => ({ name, version: application.selected === 'profile' ? application.local : application.shipped,
+    installed: application.local !== undefined, enabled: false, liveEnabled: true, removable: application.local !== undefined, optional: false,
+    rows: [{ rowId: name, moduleName: name, entryId: 'include:' + name }], application, ...extra })
+  {
+    benchState.updates = batch({ registry: OFFICIAL }); benchState.updatesHits = 0
+    const { page, errs } = await boot({ initial: [owned(VD, { shipped: '0.0.1', selected: 'installation' })] })
+    await openUpdates(page)
+    ok('updatable built-in: the account plugin is a real update row, not "comes with the app"', await page.evaluate((n) => !!document.querySelector(`.card[data-id="${n}"] [data-testid=update-built-in]`), VD)
+      && !(await page.evaluate(() => !!document.querySelector('[data-testid=app-update-row]'))))
+    await click(page, `.card[data-id="${VD}"] [data-testid=update-built-in]`)
+    await page.waitForSelector('[data-testid=confirm]')
+    await click(page, '[data-testid=confirm]')
+    await page.waitForFunction(() => document.querySelector('.modal')?.dataset.mode === 'result', { timeout: 12000 })
+    const c = await calls(page)
+    const install = c.find((x) => x[0] === 'installBundle')
+    ok('...the exact live version goes into the profile, unselected', install?.[1] === `${VD}@${LIVE}` && install?.[2]?.enabled === false && install?.[2]?.saveExact === true, JSON.stringify(install))
+    ok('...nothing is switched on (the app layers run it)', !c.some((x) => x[0] === 'setBundleEnabled'))
+    ok('...and the result asks for a restart', (await text(page)).includes('需要重启'))
+    ok('no page errors', errs.length === 0, errs.join('; '))
+    await page.close()
+  }
+  {
+    benchState.updates = batch({ selfLatest: LIVE, registry: OFFICIAL }); benchState.updatesHits = 0
+    const { page, errs } = await boot({ initial: [owned('@vibedev-si/dsh-ecosystem', { shipped: SELF, selected: 'installation' })] })
+    await openUpdates(page)
+    const row = await page.evaluate(() => { const el = document.querySelector('[data-testid=self-update-row]'); return el ? { text: el.innerText, updatable: el.hasAttribute('data-updatable') } : null })
+    ok('updatable built-in: the center offers to update itself', !!row?.updatable && row.text.includes('也可以直接更新') && !!(await page.$('[data-testid=update-self-row]')), JSON.stringify(row))
+    await click(page, '[data-testid=update-self-row]')
+    await page.waitForSelector('[data-testid=built-in-result]', { timeout: 12000 })
+    ok('...its result is "downloaded, restart to apply"', await page.$eval('[data-testid=built-in-result]', (el, v) => el.dataset.status === 'restart' && el.innerText.includes(`已下载 ${v}`) && el.innerText.includes('重启'), LIVE))
+    const c = await calls(page)
+    ok('...installing exactly its own name@version from the verified registry', c.some((x) => x[0] === 'installBundle' && x[1] === `@vibedev-si/dsh-ecosystem@${LIVE}` && x[2]?.registry === OFFICIAL), JSON.stringify(c.filter((x) => x[0] === 'installBundle')))
+    await click(page, '[data-testid=built-in-done]'); await sleep(150)
+    ok('...and the row then says it waits for the restart, with no second update button', (await page.$eval('[data-testid=self-update-row]', (el) => el.innerText)).includes('重启 VibeDev Next 后生效') && !(await page.$('[data-testid=update-self-row]')))
+    ok('no page errors', errs.length === 0, errs.join('; '))
+    await page.close()
+  }
+  {
+    benchState.updates = batch({ registry: OFFICIAL }); benchState.updatesHits = 0
+    const { page, errs } = await boot({ initial: [owned(VD, { shipped: '0.0.1', local: LIVE, selected: 'profile' })] })
+    await click(page, `.card[data-id="${VD}"]`)
+    await page.waitForSelector('[data-testid=built-in-updated]')
+    ok('updatable built-in: the detail says an update is running and names the shipped version', (await page.$eval('[data-testid=built-in-updated]', (el) => el.innerText)).includes('0.0.1'))
+    await click(page, '[data-testid=restore-built-in]')
+    await page.waitForSelector('[data-testid=built-in-result]', { timeout: 12000 })
+    const c = await calls(page)
+    ok('...restore removes only the profile copy, and asks for a restart', c.some((x) => x[0] === 'removeBundle' && x[1] === VD) && (await page.$eval('[data-testid=built-in-result]', (el) => el.dataset.status)) === 'restart')
+    ok('...after which the shipped version is shown again', (await page.evaluate((n) => window.__pm.bundles.get(n)?.version, VD)) === '0.0.1')
+    ok('no page errors', errs.length === 0, errs.join('; '))
+    await page.close()
+  }
 } catch (e) {
   ok('test run completed without throwing', false, String(e && e.stack || e))
 } finally {

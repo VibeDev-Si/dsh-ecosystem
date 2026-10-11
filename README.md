@@ -2,6 +2,12 @@
 
 集中了解、安装和管理 **VibeDev 出品的插件**，并在独立的社区标签页里浏览 **DSH 社区市场（dshmarket）**。VibeDev 生态与 DSH 宿主的插件管理器是不同入口；安装、启停与卸载仍由宿主执行。
 
+## 0.1.13
+
+- 内置插件也能直接更新：在支持的 VibeDev Next 里（0.2.1-alpha.2.20261011.3 起，插件管理会报告内置包的两个副本），VibeDev 生态和 VibeDev 账号插件出现在「可更新」里，点「更新」把 npm 上的新版本装进你的配置，重启 VibeDev Next 后生效。
+  - 应用自带的版本一直保留，作为保底：新版本与当前 DSH 不兼容时继续用自带的；之后装了更新的 VibeDev Next，自带的版本更高时也会自动用回它。
+  - 已更新的内置插件在详情里可以「恢复应用自带的版本」，同样重启后生效。
+  - 不支持的宿主（较早的 VibeDev Next、官方 DSH）保持原来的做法：内置插件随应用更新，生态不会另装一份。
 ## 0.1.12
 
 - 目录不再收录第三方的 Better Sidebar（dsh-better-sidebar）：它在官方 DSH 0.2.1-alpha.2 上无法加载，文件接口也不限于工作区；VibeDev 插件已不依赖它，侧栏增强改由 VibeDev 自研。已经装了它的用户不受影响，可在「插件」页自行停用或卸载。
@@ -48,13 +54,13 @@ VibeDev Next 已内置 VibeDev 生态，无需安装；在 VibeDev Next 的「�
 在 DSH 的插件页按完整包名安装：
 
 ```text
-@vibedev-si/dsh-ecosystem@0.1.12
+@vibedev-si/dsh-ecosystem@0.1.13
 ```
 
 独立 DSH 的命令：
 
 ```sh
-dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.12
+dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.13
 ```
 
 - 安装前会列出精确版本与依赖，先检查、安装为停用状态，再启用。已安装的组件会复用；更新原本停用的插件会保持停用。

@@ -13,6 +13,9 @@ export function createFakePm(initial = [], scenarios = {}, options = {}) {
   const output = (s) => ({ exitCode: 1, output: s, truncated: false, logPath: 'x' })
   const wait = () => (options.delay ? new Promise((r) => setTimeout(r, options.delay)) : undefined)
 
+  // An app-owned package on a host that updates it in place (VibeDev Next): `application` = {shipped, local?, selected}.
+  const newer = (a, b) => { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] > pb[i]; return false }
+  const owned = (name) => bundles.get(name)?.application
   const pm = {
     calls,
     bundles,
@@ -25,6 +28,11 @@ export function createFakePm(initial = [], scenarios = {}, options = {}) {
       const s = sc(name)
       if (s.inspectThrows) return { ok: false, error: { code: 'rpc', message: 'connection lost' } }
       if (s.inspect) return ok(s.inspect)
+      // The host takes only an exact version above the shipped one as an update of an app-owned package.
+      if (owned(name)) {
+        if (!version || !/^\d+\.\d+\.\d+$/.test(version) || !newer(version, owned(name).shipped)) return ok({ status: 'refused', problem: 'already-installed', reason: 'already installed' })
+        return ok({ status: 'accepted', kind: 'registry', name, version, bundle: true, registry: opts?.registry ?? null })
+      }
       if (bundles.get(name)?.installed) return ok({ status: 'refused', problem: 'already-installed', reason: 'already installed' })
       // The host answers with the registry that actually answered. For the default it answers null, NOT a url:
       // seen in a live self-check ("registry": null).
@@ -42,6 +50,14 @@ export function createFakePm(initial = [], scenarios = {}, options = {}) {
       if (s.incompat) return ok({ changed: false, application: 'failed', stage: 'install', target: name, error: { code: 'incompatible-version', incompatible: [{ name, version, runtimeVersion: '0.1.7', peers: { '@deepseek-ai/dsh-tools': '>=0.2.0-rc.2' } }] } })
       if (s.builds && !opts?.approvedBuilds?.length) return ok({ changed: false, application: 'failed', stage: 'install', target: name, pendingBuilds: ['esbuild', 'protobufjs'], packageResult: { ...output('Ignored build scripts'), kind: 'build-blocked' } })
       if (s.cooldown) return ok({ changed: false, application: 'failed', stage: 'install', target: name, packageResult: output(`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION 1 lockfile entries failed verification:\n  dsh-film@0.3.0 was published at 2026-10-05T08:47:54.172Z, within the minimumReleaseAge cutoff`) })
+      if (owned(name)) {
+        // Installed beside the shipped copy, unselected; it runs from the next start.
+        const b = bundles.get(name)
+        b.application = { shipped: b.application.shipped, local: version, selected: newer(version, b.application.shipped) ? 'profile' : 'installation' }
+        b.installed = true; b.removable = true
+        if (b.application.selected === 'profile') b.version = version
+        return ok({ changed: true, application: 'restart-required', stage: 'install', target: name, bundle: name, version, enabled: false })
+      }
       bundles.set(name, { name, version, installed: true, enabled: !!opts?.enabled })
       return ok({ changed: true, application: s.restartOnInstall ? 'restart-required' : 'applied', stage: 'install', target: name, bundle: name, version, enabled: !!opts?.enabled, ...(opts?.approvedBuilds ? { approvedBuilds: opts.approvedBuilds } : {}) })
     },
@@ -61,6 +77,13 @@ export function createFakePm(initial = [], scenarios = {}, options = {}) {
       const s = sc(name)
       const b = bundles.get(name)
       if (!b) return { ok: false, error: { code: 'unknown-plugin', message: 'unknown plugin' } }
+      if (b.application) {
+        // Only the profile copy goes; the shipped one runs again from the next start.
+        if (!b.installed) return ok({ changed: false, application: 'failed', stage: 'remove', target: name, error: { code: 'not-removable' } })
+        b.application = { shipped: b.application.shipped, selected: 'installation' }
+        b.installed = false; b.removable = false; b.version = b.application.shipped
+        return ok({ changed: true, application: 'restart-required', stage: 'remove', target: name })
+      }
       b.enabled = false // step 1 always happens
       if (s.removeFailsLast) return ok({ changed: true, application: 'failed', stage: 'remove', target: name, packageResult: output('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION 1 lockfile entries failed verification:\n  dsh-film@0.3.0 was published at 2026-10-05T08:47:54.172Z, within the minimumReleaseAge cutoff') })
       bundles.delete(name)

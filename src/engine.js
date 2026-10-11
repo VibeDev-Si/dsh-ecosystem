@@ -49,9 +49,32 @@ export function resolvePlan(catalog, wantedIds) {
   return out
 }
 
-/** Installation-provided packages have no profile-owned source and cannot be removed. */
+/**
+ * Installation-provided packages have no profile-owned source and cannot be removed. A host that reports `application`
+ * (VibeDev Next from 0.2.1-alpha.2.20261011.3) also lets the app's own packages be updated in the profile.
+ */
 export function providedByApp(bundle) {
-  return bundle?.removable === false && !bundle.source
+  return !!applicationCopy(bundle) || bundle?.removable === false && !bundle.source
+}
+
+/**
+ * The two copies of an app-owned package, when the host can update it: `shipped` is the floor, a newer compatible
+ * `local` copy the profile installed is `selected` from the next start, and removing it returns to the shipped one.
+ * @returns {{shipped?: string, local?: string, selected: 'installation'|'profile', reason?: string} | undefined}
+ */
+export function applicationCopy(bundle) {
+  const a = bundle?.application
+  return a && typeof a === 'object' && (a.selected === 'installation' || a.selected === 'profile') ? a : undefined
+}
+
+/** An app-owned package whose newer release this host installs into the profile (it takes over at the next start). */
+export function updatableBuiltIn(bundle) {
+  return !!applicationCopy(bundle)
+}
+
+/** The profile is running (or will run from the next start) an update of an app-owned package, not the shipped copy. */
+export function runsUpdatedCopy(bundle) {
+  return applicationCopy(bundle)?.selected === 'profile'
 }
 
 /** Presence includes installation-provided bundles, not only profile dependencies. */
@@ -92,6 +115,7 @@ export function markInstalled(plan, bundles) {
     return {
       entry: p, installed: !!b, enabled: !!b?.enabled, installedVersion: b?.version,
       ...(providedByApp(b) ? { provided: true } : {}),
+      ...(updatableBuiltIn(b) ? { updatable: true } : {}),
       ...(legacy ? { legacy, legacyEnabled: !!have.get(legacy).enabled } : {}),
     }
   })
@@ -257,6 +281,7 @@ export async function installOne(pm, entry, state, opts = {}) {
   hooks.onRequest?.(requestId, entry)
 
   if (state?.provided) {
+    if (update && state.updatable) return updateBuiltIn(pm, entry.npm, entry.version, { ...opts, hooks, requestId })
     if (update || !state.enabled) return { status: 'failed', failure: { kind: 'provided' } }
     if (!state.legacy) return { status: 'skipped' }
     const moved = await migrate(pm, entry, state.legacy, opts)
@@ -306,6 +331,52 @@ export async function installOne(pm, entry, state, opts = {}) {
   // Replacing an already-installed package only loads the new code after a restart; say so even if the host stayed quiet.
   const restart = iv.application === 'restart-required' || on.value?.application === 'restart-required' || update
   return { status: restart ? 'restart' : 'done', ...on.left }
+}
+
+/**
+ * Update an app-owned package (this center itself, or the account plugin): its exact newer version goes into the profile
+ * beside the shipped copy, unselected (the app's own layers keep running the package), and replaces the shipped copy
+ * when VibeDev Next next starts. Never throws; resolves like installOne, with status 'restart' on success.
+ * @param pm - the host's plugin manager.
+ * @param name - package name.
+ * @param version - the exact version to install (must be newer than the shipped one; the host refuses anything else).
+ * @param opts - { registry, hooks, requestId }.
+ */
+export async function updateBuiltIn(pm, name, version, opts = {}) {
+  const hooks = opts.hooks ?? {}
+  const spec = `${name}@${version}`
+  const step = (s) => hooks.onStep?.(s, { npm: name, version })
+  const registry = opts.registry ?? null
+  step('inspect')
+  const ins = await pm.inspect(spec, { registry })
+  if (!ins?.ok) return { status: 'failed', failure: { kind: 'network', diagnostic: ins?.error?.message ?? 'inspect failed' } }
+  const v = ins.value
+  if (v.status === 'refused') {
+    // 'already-installed' here means the host will not take this version as an update (not newer than the shipped one).
+    return { status: 'failed', failure: { kind: v.problem === 'network' ? 'network' : v.problem === 'not-found' ? 'notfound' : 'refused', problem: v.problem, diagnostic: v.reason, registries: v.registries } }
+  }
+  if (v.name !== name || (v.version && v.version !== version) || v.bundle === false) {
+    return { status: 'failed', failure: { kind: 'mismatch', diagnostic: `expected ${spec}, registry says ${v.name}@${v.version}` } }
+  }
+  step('install')
+  const requestId = opts.requestId ?? newRequestId()
+  const inst = await pm.installBundle(spec, { enabled: false, saveExact: true, requestId, registry: v.registry ?? registry })
+  if (!inst?.ok) return { status: 'failed', failure: { kind: 'failed', diagnostic: inst?.error?.message ?? 'install call failed' }, requestId, uncertain: true }
+  const iv = inst.value
+  if (iv.application === 'cancelled') return { status: 'cancelled' }
+  if (iv.application === 'failed') return { status: 'failed', failure: classifyFailure(iv), requestId }
+  return { status: 'restart', builtIn: true }
+}
+
+/**
+ * Return an app-owned package to the copy shipped with the app: the profile's own copy is removed, and the shipped one
+ * runs again from the next start. Never throws.
+ */
+export async function restoreBuiltIn(pm, name) {
+  const r = await pm.removeBundle(name)
+  if (!r?.ok) return { status: 'failed', failure: { kind: 'failed', diagnostic: r?.error?.message ?? 'remove failed' } }
+  if (r.value?.application === 'failed') return { status: 'failed', failure: classifyFailure(r.value) }
+  return { status: 'restart', builtIn: true }
 }
 
 /**
@@ -420,14 +491,18 @@ export async function uninstall(pm, entry) {
   return { status: r.value?.application === 'restart-required' ? 'restart' : 'done' }
 }
 
-/** Compare installed versions with the catalog. Only center-managed entries are offered for update. */
+/**
+ * Compare installed versions with the catalog. Only center-managed entries are offered for update. An app-owned package
+ * counts when the host can update it (`updatableBuiltIn`), compared at the copy the host selects; such a row is `builtIn`.
+ */
 export function pendingUpdates(catalog, bundles) {
-  const have = new Map((bundles ?? []).filter((b) => b.installed && !providedByApp(b)).map((b) => [b.name, b.version]))
+  const have = new Map((bundles ?? []).filter((b) => b.installed && !providedByApp(b) || updatableBuiltIn(b)).map((b) => [b.name, b]))
   const out = []
   for (const p of catalog.plugins) {
     if (p.updates !== 'center') continue
-    const v = have.get(p.npm)
-    if (v && compareSemver(v, p.version) < 0) out.push({ entry: p, from: v, to: p.version })
+    const b = have.get(p.npm)
+    const v = b?.version
+    if (v && compareSemver(v, p.version) < 0) out.push({ entry: p, from: v, to: p.version, ...(updatableBuiltIn(b) ? { builtIn: true } : {}) })
   }
   return out
 }
@@ -468,9 +543,12 @@ export function releasesComplete(catalog, answer) {
   })
 }
 
-/** Keep app-supplied version differences visible, but never offer to install an external replacement. */
+/**
+ * Keep app-supplied version differences visible, but never offer to install an external replacement: for a host that
+ * cannot update an app-owned package (one that updates it lists it in pendingUpdates instead).
+ */
 export function appReleaseUpdates(catalog, bundles) {
-  const have = new Map((bundles ?? []).filter(providedByApp).map((b) => [b.name, b]))
+  const have = new Map((bundles ?? []).filter((b) => providedByApp(b) && !updatableBuiltIn(b)).map((b) => [b.name, b]))
   return catalog.plugins.flatMap((p) => {
     const b = have.get(p.npm)
     return b?.version && compareSemver(b.version, p.version) < 0 ? [{ entry: p, from: b.version, to: p.version }] : []
