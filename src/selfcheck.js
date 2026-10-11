@@ -70,7 +70,7 @@ export async function runSelfCheck(ctx, panelId, catalog, errs, version, probeHo
     }
     await safe('inspect.notInstalled.defaultRegistry', () => timed('@vibedev-si/dsh-media-viewer@0.1.0', null))
     await safe('inspect.notInstalled.probedRegistry', () => timed('@vibedev-si/dsh-media-viewer@0.1.0', fastest))
-    await safe('inspect.installedName', () => { const probe = catalog.plugins.find((p) => p.id === 'dsh-better-sidebar'); return timed(probe.npm + '@' + probe.version, null) })
+    await safe('inspect.installedName', () => { const probe = catalog.plugins.find((p) => p.origin === 'community'); return timed(probe.npm + '@' + probe.version, null) })
   }
 
   // Switching the visible panel flashes the user's screen, and the host hot-reloads linked installs on every file change,

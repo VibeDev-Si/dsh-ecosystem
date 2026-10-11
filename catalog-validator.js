@@ -40,7 +40,7 @@ export const CATALOG_KNOWN = {
   officialScopes: ['@vibedev-si/'],
   officialGrandfathered: ['dsh-film'],
   /** Community entries are the packages already shipped this way; the list does not grow by remote edit. */
-  community: ['dsh-better-sidebar', 'dshmarket'],
+  community: ['dshmarket'],
   /** Never VibeDev's own: a DSH-scoped name claiming "official" is impersonation. */
   forbiddenScopes: ['@deepseek-ai/'],
   officialRepo: /^https:\/\/github\.com\/VibeDev-Si\/[A-Za-z0-9._-]+$/,
@@ -54,7 +54,7 @@ const ORIGINS = new Set(['official', 'community'])
 const ROLES = new Set(['official', 'dependency', 'companion', 'featured'])
 const UPDATES = new Set(['center', 'self'])
 const COMPAT = new Set(['verified', 'likely', 'unknown', 'incompatible'])
-const TAGS = new Set(['official', 'community', 'needsAccount', 'paid', 'needsHost02', 'needsSidebar', 'dependency', 'companion', 'tested'])
+const TAGS = new Set(['official', 'community', 'needsAccount', 'paid', 'needsHost02', 'dependency', 'companion', 'tested'])
 const CAPS = new Set(['network', 'writeFiles', 'readFiles', 'credentials', 'cost', 'agentTools', 'localRoute', 'pageScripts', 'community', 'fileAccess', 'writeConfig'])
 /** A plain package name: no urls, no git specs, no paths, no versions, no dist-tags. */
 const SPEC = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/

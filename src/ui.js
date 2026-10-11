@@ -310,7 +310,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
   /* ── pure helpers ──────────────────────────────────────────────────────── */
   const tagInfo = (t, S) => ({
     official: [S.tagOfficial, 'off'], community: [S.tagCommunity, ''], needsAccount: [S.tagNeedsAccount, 'acct'], paid: [S.tagPaid, ''],
-    needsHost02: [S.tagNeedsHost02, ''], needsSidebar: [S.tagNeedsSidebar, ''], dependency: [S.tagDependency, 'role'], companion: [S.tagCompanion, 'role'], tested: [S.tagTested, 'role'],
+    needsHost02: [S.tagNeedsHost02, ''], dependency: [S.tagDependency, 'role'], companion: [S.tagCompanion, 'role'], tested: [S.tagTested, 'role'],
   }[t])
   const sizeOf = (list) => {
     const kb = list.reduce((a, p) => a + p.sizeKB, 0)

@@ -31,7 +31,7 @@ const cases = [
   ['missing English text', (c) => { c.plugins[1].tagline.en = '' }],
   ['zh/en feature lists out of step', (c) => { c.plugins[1].does.en.pop() }],
   ['dependency on an unknown plugin', (c) => { c.plugins[2].requires = ['not-in-catalog'] }],
-  ['dependency cycle', (c) => { c.plugins[2].requires = ['dsh-better-sidebar']; c.plugins[3].requires = ['@vibedev-si/dsh-media-viewer'] }],
+  ['dependency cycle', (c) => { c.plugins[0].requires = ['dsh-film'] /* dsh-film already requires the account plugin */ }],
   ['suite item not in catalog', (c) => { c.suites[0].items.push('ghost') }],
   ['http (not https) link', (c) => { c.plugins[0].links.repo = 'http://x.example' }],
   ['no capabilities listed', (c) => { c.plugins[0].capabilities = [] }],

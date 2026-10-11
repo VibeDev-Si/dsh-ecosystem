@@ -150,40 +150,6 @@
       "compat": null
     },
     {
-      "id": "dsh-better-sidebar",
-      "npm": "dsh-better-sidebar",
-      "version": "0.24.1",
-      "publishedAt": "2026-09-28T15:37:38.360Z",
-      "origin": "community",
-      "role": "companion",
-      "updates": "self",
-      "author": "omdsh-dev",
-      "name": { "zh": "Better Sidebar", "en": "Better Sidebar" },
-      "tagline": {
-        "zh": "文件树、编辑器、变更和侧边对话合在右侧一栏，也是「媒体预览」的前置依赖",
-        "en": "File tree, editor, changes and side chat in one right column; also the prerequisite of Media Viewer"
-      },
-      "does": {
-        "zh": ["把文件树、文本编辑器、Git 变更、任务和侧边对话放进右侧栏", "让其他插件注册新的右侧栏标签页和文件预览器"],
-        "en": ["Puts the file tree, text editor, Git changes, tasks and side chat in the right column", "Lets other plugins register new sidebar tabs and file viewers"]
-      },
-      "tags": ["community", "companion"],
-      "requires": [],
-      "partners": [],
-      "legacyNames": [],
-      "sizeKB": 15138,
-      "sizeNote": { "zh": "15 MB · 30 个依赖", "en": "15 MB · 30 dependencies" },
-      "capabilities": [
-        { "key": "community", "text": { "zh": "由 omdsh-dev 维护，本中心不审查其代码", "en": "Maintained by omdsh-dev; this center does not review its code" } },
-        { "key": "fileAccess", "text": { "zh": "其 README 说明：文件接口不限制在工作区内，可访问你的用户有权限的任意路径", "en": "Its README states the file routes are not confined to the workspace and can reach any path your user can" } }
-      ],
-      "links": { "repo": "https://github.com/omdsh-dev/DSH-better-sidebar", "npm": "https://www.npmjs.com/package/dsh-better-sidebar" },
-      "cmd": "dsh plugin add dsh-better-sidebar",
-      "icon": { "glyph": { "zh": "栏", "en": "S" }, "grad": ["#7c8aa5", "#4c5a75"] },
-      "reviewed": null,
-      "compat": { "s": "likely", "why": { "zh": "在 VibeDev Next 里已能正常加载（本机观察，未做系统测试）", "en": "Loads fine in VibeDev Next (observed locally; not systematically tested)" } }
-    },
-    {
       "id": "dshmarket",
       "npm": "dshmarket",
       "version": "1.66.8",

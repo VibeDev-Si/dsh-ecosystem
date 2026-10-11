@@ -2,6 +2,11 @@
 
 集中了解、安装和管理 **VibeDev 出品的插件**，并在独立的社区标签页里浏览 **DSH 社区市场（dshmarket）**。VibeDev 生态与 DSH 宿主的插件管理器是不同入口；安装、启停与卸载仍由宿主执行。
 
+## 0.1.12
+
+- 目录不再收录第三方的 Better Sidebar（dsh-better-sidebar）：它在官方 DSH 0.2.1-alpha.2 上无法加载，文件接口也不限于工作区；VibeDev 插件已不依赖它，侧栏增强改由 VibeDev 自研。已经装了它的用户不受影响，可在「插件」页自行停用或卸载。
+- 媒体预览安装后的指引改为新入口：文件树里点开媒体文件即可预览，「媒体画廊」在右侧栏开始页和文件树顶部。
+
 ## 0.1.11
 
 - 目录：媒体预览与画廊升到 0.2.0，直接用 DSH 自带的右侧栏，**不再需要 Better Sidebar**；「AI 创作套装」只含 VibeDev 自己的三个插件。Better Sidebar 仍可单独安装，作为推荐搭档。
@@ -43,13 +48,13 @@ VibeDev Next 已内置 VibeDev 生态，无需安装；在 VibeDev Next 的「�
 在 DSH 的插件页按完整包名安装：
 
 ```text
-@vibedev-si/dsh-ecosystem@0.1.11
+@vibedev-si/dsh-ecosystem@0.1.12
 ```
 
 独立 DSH 的命令：
 
 ```sh
-dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.11
+dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.12
 ```
 
 - 安装前会列出精确版本与依赖，先检查、安装为停用状态，再启用。已安装的组件会复用；更新原本停用的插件会保持停用。

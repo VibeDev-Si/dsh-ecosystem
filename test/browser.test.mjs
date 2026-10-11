@@ -94,7 +94,7 @@ try {
     ok('the first screen keeps the explanation collapsed, with "关于" to open it', !t.includes('VibeDev 团队出品的插件') && t.includes('关于 VibeDev 生态'))
     await clickText(page, '关于 VibeDev 生态'); await sleep(120)
     ok('...and clicking it explains what this is', (await text(page)).includes('VibeDev 团队出品的插件'))
-    ok('shows 3 official cards + 2 companions', (await page.evaluate(() => document.querySelectorAll('.card').length)) === 5)
+    ok('shows 3 official cards + 1 companion (the community market; no third-party prerequisite)', (await page.evaluate(() => document.querySelectorAll('.card').length)) === 4)
     ok('the suite installs our three plugins (Better Sidebar is no longer part of it)', t.includes('将安装 3 个插件（已装 0 个）'))
     ok('account + billing is visible on the card', t.includes('需要 VibeDev 账号') && t.includes('按用量计费'))
     ok('community plugins are labelled as such', (await page.evaluate(() => [...document.querySelectorAll('.card[data-id=dshmarket] .tag')].map((x) => x.textContent))).includes('DSH 社区市场插件'))
@@ -455,7 +455,7 @@ try {
   {
     // The registry probe is read through ctx.inject, as the real host demands; reading it directly throws there.
     const { page, errs } = await boot({ noProbe: true })
-    ok('a host without the probe service still loads and renders', (await page.evaluate(() => document.querySelectorAll('.card').length)) === 5 && errs.length === 0, errs.join('; '))
+    ok('a host without the probe service still loads and renders', (await page.evaluate(() => document.querySelectorAll('.card').length)) === 4 && errs.length === 0, errs.join('; '))
     await page.close()
   }
   // contrast of the label on primary buttons, light theme and dark theme, and a live theme switch

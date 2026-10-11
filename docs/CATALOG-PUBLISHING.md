@@ -47,7 +47,7 @@
 | `id` / `npm` | 必须**完全相同**，且是纯包名（不能是 url、git spec、路径、带版本或 dist-tag） |
 | `version` | 精确已发布版本 `x.y.z` |
 | `publishedAt` | npm 的真实发布时间，ISO UTC（如 `2026-10-05T14:40:00.000Z`），不早于 2020、不超前现在 24 小时 |
-| `origin` | `official`（`@vibedev-si/*` 或 `dsh-film`）或 `community`（仅既有的 `dsh-better-sidebar` / `dshmarket`） |
+| `origin` | `official`（`@vibedev-si/*` 或 `dsh-film`）或 `community`（仅既有的 `dshmarket`；VibeDev 插件不以第三方插件为前置依赖） |
 | `role` | `official` / `dependency` / `companion` / `featured`；社区条目不能是 `official` |
 | `updates` | `center`（本中心负责更新）或 `self`（插件自更新）；本中心只对自己负责的条目提示更新 |
 | `name` / `tagline` / `does[]` | 中英双语必填，`does` 中英行数必须一致（≤8 行），`tagline` ≤200 字 |
