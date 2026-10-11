@@ -67,44 +67,56 @@
     {
       "id": "dsh-film",
       "npm": "dsh-film",
-      "version": "0.3.3",
-      "publishedAt": "2026-10-06T17:32:14.194Z",
+      "version": "0.5.1",
+      "publishedAt": "2026-10-11T11:45:17.870Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
       "name": { "zh": "VibeDev 影视工作台", "en": "VibeDev Film" },
       "tagline": {
-        "zh": "在右侧栏写剧本、排分镜、调度导演台，Agent 用影视工具协同改片",
-        "en": "Write the script, board the shots and run the director desk in the right sidebar, with film tools for the agent"
+        "zh": "在右侧栏打开画布式影视工作台：小说拆解、剧本、分镜画布、图片/视频/音频生成、剪辑成片",
+        "en": "A canvas film workbench in the right sidebar: novel breakdown, script, storyboard canvas, image / video / audio generation and editing"
       },
       "does": {
         "zh": [
-          "剧本标签：Markdown 剧本，每次写入有版本记录，可单独撤回某次操作",
-          "分镜画布：节点式画布，用「VibeDev 账号与模型」生成图片和视频（会一并安装）",
-          "导演台：在 3D 场景里调度人物与机位",
-          "Agent 影视工具 30 个，另带编剧技能 /film-screenwriting"
+          "画布式工作台：小说拆解、剧本、分镜、导演台、剪辑成片，在会话右侧栏打开",
+          "图片、视频、音频生成节点都走 VibeDev 账号；发送键旁显示预计费用",
+          "音频节点支持音乐、播客和语音，只显示所选模型支持的参数；刷新页面不会重复生成",
+          "Agent 可以用影视工具搭建画布、调用节点，另带影视技能",
+          "从旧版影视工作台升级：配置条目不变，旧项目文件保留",
+          "只支持 Windows x64（Bun 运行时随插件安装，不用另装）"
         ],
         "en": [
-          "Script tab: Markdown screenplay with a version record for every write; any single operation can be reverted",
-          "Storyboard canvas: node-based canvas that generates images and video through VibeDev Account & Models (installed with it)",
-          "Director desk: stage characters and cameras in a 3D scene",
-          "30 film tools for the agent, plus the /film-screenwriting skill"
+          "Canvas workbench: novel breakdown, script, storyboard, director desk and editing, opened in the session's right sidebar",
+          "Image, video and audio generation nodes all go through the VibeDev account, with the expected cost beside the send button",
+          "The audio node does music, podcasts and speech, showing only the options the chosen model supports; a reload never generates twice",
+          "The agent can build the canvas and drive nodes with film tools, plus film skills",
+          "Upgrading from the earlier film workbench keeps the profile entry and the old project files",
+          "Windows x64 only (the Bun runtime is installed with it; nothing else to install)"
         ]
       },
       "tags": ["official", "needsHost02"],
       "requires": ["@vibedev-si/dsh-vibedev"],
       "partners": ["@vibedev-si/dsh-vibedev", "@vibedev-si/dsh-media-viewer"],
-      "legacyNames": [],
-      "sizeKB": 12216,
+      "legacyNames": ["dsh-film-studio"],
+      "sizeKB": 47029,
       "capabilities": [
-        { "key": "writeFiles", "text": { "zh": "项目是工作区 film/ 下的普通文件；升级和卸载插件不会改动它们", "en": "A project is plain files under film/ in the workspace; upgrading or removing the plugin does not touch them" } },
-        { "key": "agentTools", "text": { "zh": "为有影片的会话增加影视工具和说明，会占用部分上下文", "en": "Adds film tools and guidance to sessions with a film, using part of the context" } }
+        { "key": "writeFiles", "text": { "zh": "项目保存在工作区的「VibeDev Film」文件夹，生成结果在项目的 assets/ 下；升级和卸载插件不会改动它们", "en": "Projects are kept in the workspace's \"VibeDev Film\" folder and results under the project's assets/; upgrading or removing the plugin does not touch them" } },
+        { "key": "localRoute", "text": { "zh": "在本机回环地址上运行工作台服务，只接受本插件签发的会话", "en": "Runs the workbench server on a loopback address, accepting only sessions this plugin issues" } },
+        { "key": "agentTools", "text": { "zh": "为 Agent 增加影视工具（打开工作台、列出与调用画布操作）和影视技能", "en": "Adds film tools (open the workbench, list and call canvas operations) and film skills for the agent" } },
+        { "key": "cost", "text": { "zh": "生成节点按 VibeDev 价格扣费，发送前在节点上显示预计费用；失败的任务不扣费", "en": "Generation nodes are charged at VibeDev prices, with the expected cost shown on the node before sending; failed tasks are not charged" } }
       ],
       "links": { "repo": "https://github.com/VibeDev-Si/dsh-film", "npm": "https://www.npmjs.com/package/dsh-film" },
       "cmd": "dsh plugin add dsh-film",
       "icon": { "glyph": { "zh": "影", "en": "F" }, "grad": ["#6f7bff", "#a24dff"] },
       "reviewed": null,
-      "compat": null
+      "compat": {
+        "s": "likely",
+        "why": {
+          "zh": "只支持 Windows x64；音频生成需要 VibeDev 账号与模型 0.3.1 及以上",
+          "en": "Windows x64 only; audio generation needs VibeDev Account & Models 0.3.1 or later"
+        }
+      }
     },
     {
       "id": "@vibedev-si/dsh-media-viewer",
