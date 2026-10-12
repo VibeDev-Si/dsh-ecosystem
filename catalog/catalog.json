@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-11",
+  "updated": "2026-10-12",
   "suites": [
     {
       "id": "creator",
@@ -16,8 +16,8 @@
     {
       "id": "@vibedev-si/dsh-vibedev",
       "npm": "@vibedev-si/dsh-vibedev",
-      "version": "0.3.2",
-      "publishedAt": "2026-10-11T11:16:04.099Z",
+      "version": "0.3.3",
+      "publishedAt": "2026-10-12T17:41:34.308Z",
       "origin": "official",
       "role": "official",
       "updates": "center",
