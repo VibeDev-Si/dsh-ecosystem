@@ -318,7 +318,8 @@ try {
     ok('re-entry: the live version is there at once, not the shipped one', (await filmVersion(page)).includes(LIVE), await filmVersion(page))
     ok('re-entry: the installed state is there at once (no placeholder, no 安装 for an installed plugin)', await installedState(page, MV) && !(await pending(page, MV)) && !(await installButton(page, MV)))
     await sleep(1700)
-    ok('re-entry still asks the route once, and only once', benchState.updatesHits === hits + 1, `hits ${hits} -> ${benchState.updatesHits}`)
+    // 0.1.15: a check under a minute old is this opening's answer (the host would serve it from its one-minute cache anyway).
+    ok('re-entry within a minute reuses the check just made (no second request)', benchState.updatesHits === hits, `hits ${hits} -> ${benchState.updatesHits}`)
     ok('no page errors', errs.length === 0, errs.join('; '))
     await page.close()
 
@@ -344,6 +345,75 @@ try {
     ok('no page errors', fourth.errs.length === 0, fourth.errs.join('; '))
     await fourth.page.close()
     benchState.updatesDelay = 0
+  }
+  // ── 0.1.15: one check at app start, a dot on the sidebar entry, a banner on the first page ──
+  {
+    benchState.updates = batch(); benchState.updatesHits = 0; benchState.updatesDelay = 300
+    const page = await browser.newPage()
+    const errs = []
+    page.on('pageerror', (e) => errs.push(String(e)))
+    page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push(m.text()) })
+    await page.goto(ORIGIN + '/')
+    // The app loads the client half at boot; nobody opens the page.
+    await page.evaluate(async (initial) => {
+      const { createFakePm } = await import('/fake-pm.js')
+      window.__pm = createFakePm(initial, {}, {})
+      window.setup({ locale: 'zh', settle: { between: { quietMs: 20, maxMs: 200 }, final: { quietMs: 40, maxMs: 300 } } })
+      const entry = window.__reg.slots.find((s) => s.decl && s.decl.name === 'sidebar.panellist')
+      const host = document.createElement('div'); host.id = 'sidebar-entry'; document.body.appendChild(host)
+      window.__entryRoot = ReactDOM.createRoot(host)
+      window.__entryRoot.render(window.React.createElement(entry.comp, { size: 18 }))
+    }, [{ name: MV, version: ver(MV), enabled: true }])
+    const dot = () => page.evaluate(() => document.querySelector('#sidebar-entry [data-vdc-update-badge]')?.getAttribute('data-vdc-update-badge') ?? null)
+    ok('before the startup check the sidebar entry has no dot', (await dot()) === null)
+    await page.waitForFunction(() => !!document.querySelector('#sidebar-entry [data-vdc-update-badge]'), { timeout: 8000 })
+    // The installed media viewer has a newer release, and so does this center: two.
+    ok('after the startup check the sidebar entry shows the dot, counting the updates', (await dot()) === '2', String(await dot()))
+    ok('its tooltip says how many', (await page.evaluate(() => document.querySelector('#sidebar-entry [data-vdc-update-badge]').title)).includes('2 个更新可用'))
+    ok('the startup check asked the route once, without the page being opened', benchState.updatesHits === 1, 'hits=' + benchState.updatesHits)
+    await sleep(2600)
+    ok('PRIVACY: and nothing more on a timer', benchState.updatesHits === 1, 'hits=' + benchState.updatesHits)
+
+    // Opening the page within the minute reuses that check.
+    await page.evaluate(() => window.mountPanel())
+    await page.waitForSelector('[data-testid=updates-banner]', { timeout: 5000 })
+    ok('opening the page right after does not ask again', benchState.updatesHits === 1, 'hits=' + benchState.updatesHits)
+    const banner = await page.$eval('[data-testid=updates-banner]', (el) => el.innerText)
+    ok('the first page shows a banner with the number and what can be updated', banner.includes('有 2 个更新可用') && banner.includes('媒体预览') && banner.includes('VibeDev 生态'), banner.replace(/\n/g, ' | '))
+    ok('the banner and the Updates tab show the same number as the dot', (await badge(page)) === '2')
+    await click(page, '[data-testid=updates-banner-open]')
+    ok('its button opens the Updates tab', await page.evaluate(() => document.querySelector('[data-tab=updates]').classList.contains('on')))
+    ok('...where the check counts as verified, not as checking', (await state(page)) === 'verified', String(await state(page)))
+    // An explicit check always asks.
+    await click(page, '[data-testid=release-status] button')
+    await page.waitForFunction(() => document.querySelector('[data-testid=release-status]')?.dataset.state === 'verified', { timeout: 8000 })
+    ok('"check for updates" always asks the route', benchState.updatesHits === 2, 'hits=' + benchState.updatesHits)
+
+    // Updating the media viewer elsewhere (the Plugins page): the dot follows, without going online.
+    await page.evaluate((name) => { window.__pm.bundles.get(name).version = '9.9.0'; window.__fireChanged() }, MV)
+    await page.waitForFunction(() => document.querySelector('#sidebar-entry [data-vdc-update-badge]')?.getAttribute('data-vdc-update-badge') === '1', { timeout: 5000 })
+    ok('after a plugin changes, the dot counts one fewer', (await dot()) === '1')
+    ok('...and that took no request', benchState.updatesHits === 2, 'hits=' + benchState.updatesHits)
+    ok('no page errors', errs.length === 0, errs.join('; '))
+    await page.close()
+    benchState.updatesDelay = 0
+  }
+
+  // ── nothing to update: no dot, no banner ──
+  {
+    benchState.updates = batch({ latest: SELF, names: [] }); benchState.updatesHits = 0
+    const { page, errs } = await boot({ initial: [{ name: MV, version: ver(MV), enabled: true }] })
+    await page.evaluate(() => {
+      const entry = window.__reg.slots.find((s) => s.decl && s.decl.name === 'sidebar.panellist')
+      const host = document.createElement('div'); host.id = 'sidebar-entry'; document.body.appendChild(host)
+      ReactDOM.createRoot(host).render(window.React.createElement(entry.comp, { size: 18 }))
+    })
+    await openUpdates(page)
+    await sleep(300)
+    ok('up to date: no banner on the first page', await page.evaluate(() => { document.querySelector('[data-tab=all]').click(); return !document.querySelector('[data-testid=updates-banner]') }))
+    ok('up to date: no dot on the sidebar entry', await page.evaluate(() => !document.querySelector('#sidebar-entry [data-vdc-update-badge]')))
+    ok('no page errors', errs.length === 0, errs.join('; '))
+    await page.close()
   }
 } catch (e) {
   ok('test run completed without throwing', false, String(e && e.stack || e))

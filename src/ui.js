@@ -160,6 +160,48 @@ export function createCenter(React, catalog, host) {
     try { host.memory?.write(MEMORY_KEY, JSON.stringify({ ...answer, keptAt: new Date().toISOString() })) } catch { /* the next opening reads it fresh */ }
   }
 
+  /* ── one check at app start, and the number on the sidebar entry ─────────────
+   * The app loads this client half at boot. It checks once then (never on a timer), so the sidebar entry can show
+   * that an update is waiting before the page is ever opened; the installed list is re-read, without going online,
+   * whenever plugins change. The page reuses a check under a minute old and otherwise asks once per opening, as
+   * before; an explicit check always asks. The startup check and the page share one request in flight. */
+  const FRESH_MS = 60_000
+  let inflight = null
+  let lastChecked = null // { at, answer }: the most recent answer this page's life received, ok or not
+  const badge = { count: 0, listeners: new Set() }
+  const setBadge = (count) => {
+    if (badge.count === count) return
+    badge.count = count
+    for (const listener of [...badge.listeners]) { try { listener() } catch { /* one subscriber must not stop the others */ } }
+  }
+  const requestUpdates = (signal) => {
+    if (inflight) return inflight
+    inflight = Promise.resolve().then(() => host.checkUpdates(signal)).catch(() => undefined).then((answer) => {
+      rememberAnswer(answer)
+      if (answer !== undefined) lastChecked = { at: Date.now(), answer }
+      return answer
+    }).finally(() => { inflight = null })
+    return inflight
+  }
+  const recount = async () => {
+    if (!host.pm) return
+    const result = await E.readBundleInventory(host.pm)
+    if (!result?.ok) return
+    lastBundles = result.value
+    // The newest successful answer (a failed check must not hide updates found before).
+    setBadge(E.updateCount(catalog, rememberedAnswer(), result.value, host.version?.() ?? '0.0.0'))
+  }
+  let started = false
+  const startup = () => {
+    if (started) return
+    started = true
+    void (async () => {
+      if (host.checkUpdates && !lastChecked) await requestUpdates()
+      await recount()
+    })().catch(() => {})
+    host.onChanged?.(() => { void recount().catch(() => {}) })
+  }
+
   /* ── style ─────────────────────────────────────────────────────────────── */
   const CSS = `.vdc{--bg:var(--dsw-alias-bg-base,#fff);--l1:var(--dsw-alias-bg-layer-1,#f6f7f9);--l2:var(--dsw-alias-bg-layer-2,#eceef3);--ov:var(--dsw-alias-bg-overlay,#fff);
 --b1:var(--dsw-alias-border-l1,rgba(20,24,40,.09));--b2:var(--dsw-alias-border-l2,rgba(20,24,40,.18));--brand:var(--dsw-alias-brand-primary,#4d6bfe);
@@ -188,6 +230,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
 .vdc .wrap:not(:where([data-vdc-market], [data-vdc-market] *)){max-width:1060px;margin:0 auto;padding:20px 24px 56px}
 .vdc .banner:not(:where([data-vdc-market], [data-vdc-market] *)){display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;border:1px solid color-mix(in srgb,var(--warn) 45%,var(--b1));background:color-mix(in srgb,var(--warn) 9%,var(--bg));margin-bottom:16px}
 .vdc .banner .grow:not(:where([data-vdc-market], [data-vdc-market] *)){flex:1}
+.vdc .banner.info:not(:where([data-vdc-market], [data-vdc-market] *)){align-items:center;margin-bottom:16px;border-color:color-mix(in srgb,var(--brand) 40%,var(--b1));background:color-mix(in srgb,var(--brand) 7%,var(--bg))}
+.vdc .banner.info > svg:not(:where([data-vdc-market], [data-vdc-market] *)){color:var(--brand);flex:none}
 .vdc .banner small:not(:where([data-vdc-market], [data-vdc-market] *)){display:block;color:var(--t2);margin-top:2px}
 .vdc .intro:not(:where([data-vdc-market], [data-vdc-market] *)){border:1px solid var(--b1);border-radius:16px;padding:18px 20px;background:linear-gradient(135deg,color-mix(in srgb,var(--brand) 8%,var(--bg)),var(--bg) 60%);margin-bottom:16px}
 .vdc .intro h2:not(:where([data-vdc-market], [data-vdc-market] *)){margin:0 0 4px;font-size:18px}
@@ -354,14 +398,20 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const liveCatalog = useMemo(() => E.catalogWithReleases(catalog, releaseState.answer), [releaseState.answer])
     const PLUGINS = liveCatalog.plugins
     const byId = (id) => PLUGINS.find((p) => p.id === id)
-    const loadReleases = useCallback(async () => {
+    const loadReleases = useCallback(async (manual = false) => {
       if (releaseRequest.current) return releaseRequest.current
       if (!host.checkUpdates) { setReleaseState({ kind: 'unavailable', answer: null }); return undefined }
+      // The startup check (or another opening) answered under a minute ago: that is this opening's answer.
+      if (!manual && !inflight && lastChecked && Date.now() - lastChecked.at < FRESH_MS) {
+        const answer = lastChecked.answer
+        setReleaseState((previous) => ({ kind: answer?.ok ? 'ready' : 'unavailable',
+          answer: answer && (Array.isArray(answer.plugins) || answer.self) ? answer : previous.answer }))
+        return answer
+      }
       setReleaseState((previous) => ({ ...previous, kind: 'checking' }))
       const signal = releaseLifetime.current?.signal
-      const task = Promise.resolve().then(() => host.checkUpdates(signal)).catch(() => undefined)
+      const task = requestUpdates(signal)
         .then((answer) => {
-          rememberAnswer(answer)
           if (!signal?.aborted) setReleaseState((previous) => ({ kind: answer?.ok ? 'ready' : 'unavailable',
             answer: answer && (Array.isArray(answer.plugins) || answer.self) ? answer : previous.answer }))
           return answer
@@ -569,7 +619,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     // "Is there a newer center?": one read of npm, made by the host half, only when the user clicks.
     const checkSelf = async () => {
       setSelfUpd({ kind: 'checking' })
-      const answer = host.checkUpdates ? (await loadReleases())?.self
+      const answer = host.checkUpdates ? (await loadReleases(true))?.self
         : await (host.checkLatest ? host.checkLatest() : Promise.resolve(undefined))
       setSelfUpd(E.judgeSelfUpdate(host.version?.() ?? '0.0.0', answer))
     }
@@ -728,6 +778,19 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
         h('h3', null, L(u.entry.name, lang)), h('div', { className: 'sub' }, `${u.from} → ${u.to}`),
         h('p', null, S.appUpdateHelp), h('span', { className: 'tag' }, S.provided))),
     ].filter(Boolean)
+    /** On the first page: what can be updated, and the way to it (built-in plugins included; nothing installs by itself). */
+    const UpdatesBanner = () => {
+      if (!Array.isArray(bundles) || counts.upd === 0) return null
+      const names = [
+        ...updates.map((u) => `${L(u.entry.name, lang)} ${u.to}`),
+        ...appUpdates.map((u) => `${L(u.entry.name, lang)} ${u.to}`),
+        ...selfRelease.kind === 'newer' ? [`${S.title} ${selfRelease.latest}`] : [],
+      ]
+      const shown = names.slice(0, 3).join(lang === 'zh' ? '、' : ', ') + (names.length > 3 ? S.updatesBannerMore : '')
+      return h('div', { className: 'banner info', key: 'updates', 'data-testid': 'updates-banner' }, I.down(),
+        h('div', { className: 'grow' }, h('b', null, S.updatesBannerT(counts.upd)), h('small', null, shown)),
+        h('button', { className: 'btn primary', 'data-testid': 'updates-banner-open', onClick: () => setView('updates') }, S.updatesBannerOpen))
+    }
     const Main = () => {
       if (view === 'community') return Community()
       let list = official
@@ -738,6 +801,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       const status = releaseState.kind === 'checking' || releaseState.kind === 'idle' ? S.releaseChecking
         : checked ? S.releaseChecked : S.releaseUnavailable
       return [
+        view === 'all' && UpdatesBanner(),
         view === 'all' && intro && h(Intro, { key: 'i' }),
         view === 'all' && h(Suite, { key: 's' }),
         h('div', { className: 'sec', key: 'h' }, h('h3', null, S.official), h('span', null, S.officialSub(official.length))),
@@ -956,6 +1020,8 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
     const modalBody = !modal ? null : modal.mode === 'confirm' ? Confirm() : modal.mode === 'run' ? Run() : modal.mode === 'result' ? Result() : modal.mode === 'migrate' ? Migrate() : modal.mode === 'builtin' ? BuiltIn() : UninstallResult()
 
     const counts = { inst: official.filter(isIn).length, upd: updates.length + appUpdates.length + (selfRelease.kind === 'newer' ? 1 : 0) }
+    // The sidebar entry shows the same number as the Updates tab (see E.updateCount), once the installed list is known.
+    useEffect(() => { if (Array.isArray(bundles)) setBadge(counts.upd) }, [bundles, counts.upd])
     return h('div', { className: 'vdc', ref: rootRef, 'data-testid': 'center', onClick: () => menu && setMenu(null) },
       h('style', null, CSS),
       h('header', { className: 'top' },
@@ -972,5 +1038,7 @@ position:relative;display:flex;flex-direction:column;height:100%;min-height:0;ba
       Drawer(),
       modal && [h('div', { className: 'mask mask2', key: 'mk' }), h('section', { className: 'modal', key: 'md', 'data-mode': modal.mode }, modalBody)])
   }
+  Center.startup = startup
+  Center.updates = { count: () => badge.count, subscribe: (listener) => { badge.listeners.add(listener); return () => badge.listeners.delete(listener) } }
   return Center
 }

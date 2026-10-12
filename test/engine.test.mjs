@@ -784,4 +784,22 @@ await t('last answer: its age is counted from when this client kept it, and the 
   assert.equal('keptAt' in restored, false)
   assert.equal(E.restoredAnswer(kept({ keptAt: '2026-08-01T00:00:00.000Z' }), catalog, NOW), null)
 })
+// ── how many updates (the Updates tab and the sidebar badge show the same number) ──
+await t('update count: nothing is counted before the installed list is known', () => {
+  assert.equal(E.updateCount(catalog, null, null, '0.1.0'), 0)
+  assert.equal(E.updateCount(catalog, null, false, '0.1.0'), 0)
+})
+await t('update count: installed plugins with a newer verified release, plus this center when it is behind', () => {
+  const answer = {
+    ok: true, checkedAt: '2026-10-12T00:00:00.000Z',
+    plugins: [{ name: MV, ok: true, version: '9.9.0', publishedAt: '2026-10-11T00:00:00.000Z', registry: 'https://registry.npmjs.org/' }],
+    self: { ok: true, latest: '9.9.0', publishedAt: '2026-10-11T00:00:00.000Z', registry: 'https://registry.npmjs.org/' },
+  }
+  const bundles = [{ name: MV, version: by(MV).version, installed: true, enabled: true, removable: true, optional: false }]
+  assert.equal(E.updateCount(catalog, answer, bundles, '0.1.0'), 2)
+  assert.equal(E.updateCount(catalog, answer, bundles, '9.9.0'), 1)
+  assert.equal(E.updateCount(catalog, answer, [], '9.9.0'), 0)
+  // A failed check counts nothing it could not verify.
+  assert.equal(E.updateCount(catalog, { ok: false }, bundles, '0.1.0'), 0)
+})
 console.log(`\n${n} engine tests passed`)

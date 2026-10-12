@@ -529,6 +529,23 @@ export function catalogWithReleases(catalog, answer) {
   }) }
 }
 
+/**
+ * How many updates the center offers: the number on its Updates tab and on its sidebar entry, so the two
+ * never disagree. Installed plugins with a newer verified release (pendingUpdates), app-owned packages that
+ * a newer app release brings (appReleaseUpdates), and this center itself when it is behind.
+ * @param catalog - The shipped catalog; the answer's catalog and releases are applied as the page applies them.
+ * @param answer - A /vdc/updates answer, or null.
+ * @param bundles - The installed list; anything else (still loading, unavailable) counts nothing.
+ * @param selfVersion - The running version of this center.
+ * @returns The count.
+ */
+export function updateCount(catalog, answer, bundles, selfVersion) {
+  if (!Array.isArray(bundles)) return 0
+  const live = catalogWithReleases(catalog, answer)
+  return pendingUpdates(live, bundles).length + appReleaseUpdates(live, bundles).length
+    + (judgeSelfUpdate(selfVersion, answer?.self).kind === 'newer' ? 1 : 0)
+}
+
 /** How long an answer kept from an earlier visit may still be shown while the next check runs. */
 export const KEPT_ANSWER_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 

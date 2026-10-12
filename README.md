@@ -2,6 +2,12 @@
 
 集中了解、安装和管理 **VibeDev 出品的插件**，并在独立的社区标签页里浏览 **DSH 社区市场（dshmarket）**。VibeDev 生态与 DSH 宿主的插件管理器是不同入口；安装、启停与卸载仍由宿主执行。
 
+## 0.1.15
+
+- 启动时检查一次更新：应用启动约 1.5 秒后检查一次（不定时轮询），侧栏「VibeDev 生态」图标上出现小红点，鼠标悬停显示有几个更新；在别处装好或更新了插件，红点随之变化（不再联网）。
+- 「全部」页顶部显示「有 N 个更新可用」，列出可更新的插件和版本，「查看更新」直接打开「可更新」页。内置插件（VibeDev 账号插件、本生态）同样只提示，由你点「更新」。
+- 启动检查后一分钟内打开页面直接沿用这次结果，不再重复请求；点「检查更新」总会重新检查。
+
 ## 0.1.14
 
 - 打开生态不再「闪一下」：页面一打开就显示上次核验过的最新目录（版本、介绍、可更新），不再先显示随包的旧目录、几秒后再换成在线目录；新的核验照常在后台进行，状态栏显示「正在核验」，核验完成前不会标成「已核验」。上次的目录保存在本机，超过 30 天、比应用自带目录还旧、或通不过目录校验的不会使用。
@@ -60,13 +66,13 @@ VibeDev Next 已内置 VibeDev 生态，无需安装；在 VibeDev Next 的「�
 在 DSH 的插件页按完整包名安装：
 
 ```text
-@vibedev-si/dsh-ecosystem@0.1.14
+@vibedev-si/dsh-ecosystem@0.1.15
 ```
 
 独立 DSH 的命令：
 
 ```sh
-dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.14
+dsh plugin --profile <profile> add @vibedev-si/dsh-ecosystem@0.1.15
 ```
 
 - 安装前会列出精确版本与依赖，先检查、安装为停用状态，再启用。已安装的组件会复用；更新原本停用的插件会保持停用。
@@ -100,7 +106,7 @@ npm run validate:online     # 核对目录精确版本与 npm 发布事实
 
 **VibeDev Ecosystem** discovers and manages plugins made by VibeDev, with the DSH community market embedded in a separate tab. Its catalog is maintained independently on the repository's main branch: publishing a new package and updating the validated catalog makes it discoverable without another client release. The bundled catalog remains an offline fallback.
 
-Opening the panel or explicitly checking updates reads the catalog and verifies stable npm releases. Successful catalog reads are cached for five minutes and complete release checks for one minute, with no polling. The panel opens on the last verified catalog it kept (on this machine, at most 30 days old, never older than the shipped one and re-validated), shown as still checking until the new check answers, so it does not switch from the shipped catalog to the online one in front of the user; a card whose installed state is not known yet shows a placeholder rather than an install button. Official npm takes precedence; a mirror is only a labelled fallback. Failed reads never claim everything is current. Built-in packages require an app update, and ecosystem self-updates show an exact manual spec rather than unloading the running panel.
+The app start (once, about 1.5 s after the client half loads), opening the panel, or explicitly checking updates reads the catalog and verifies stable npm releases; the sidebar entry shows a dot while updates are available, and the first page a banner naming them. An opening within a minute of a check reuses it. Successful catalog reads are cached for five minutes and complete release checks for one minute, with no polling. The panel opens on the last verified catalog it kept (on this machine, at most 30 days old, never older than the shipped one and re-validated), shown as still checking until the new check answers, so it does not switch from the shipped catalog to the online one in front of the user; a card whose installed state is not known yet shows a placeholder rather than an install button. Official npm takes precedence; a mirror is only a labelled fallback. Failed reads never claim everything is current. Built-in packages require an app update, and ecosystem self-updates show an exact manual spec rather than unloading the running panel.
 
 The embedded market's styles are isolated. Unreadable filled text buttons receive a narrowly scoped black-or-white foreground adjustment without altering backgrounds or theme tokens. The package name and panel identity remain compatible; the About section starts collapsed and withdrawn promotional footers stay removed.
 

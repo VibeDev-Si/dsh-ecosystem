@@ -61,7 +61,33 @@ function PanelIcon(size) {
     h("path", { d: "M10 3H5a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h1a2 2 0 1 1 0 4H5a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h5v-2a2 2 0 1 1 4 0v2h5a2 2 0 0 0 2-2v-5h-2a2 2 0 1 1 0-4h2V5a2 2 0 0 0-2-2h-5v1a2 2 0 1 1-4 0z" }));
 }
 
-function currentLocale(ctx) { try { var l = ctx.locale.getLocale(); return (l && (l.active || l.id)) || "zh"; } catch (e) { return "zh"; } }
+/**
+ * The sidebar entry: the panel icon, with a dot while updates are available (the Updates tab's number,
+ * in the tooltip). It follows the count the center keeps, so it changes without the page being open.
+ */
+function PanelEntry(p) {
+  var h = React.createElement;
+  var size = (p && p.size) || 18;
+  var state = React.useState(function () { return CenterRef.current ? CenterRef.current.updates.count() : 0; });
+  var count = state[0], setCount = state[1];
+  React.useEffect(function () {
+    if (!CenterRef.current) return undefined;
+    var sync = function () { setCount(CenterRef.current.updates.count()); };
+    sync();
+    return CenterRef.current.updates.subscribe(sync);
+  }, []);
+  var icon = PanelIcon(size);
+  if (!count) return icon;
+  var title = STR[pick(CenterRef.locale ? CenterRef.locale() : "zh")].badgeTitle(count);
+  return h("span", { "data-vdc-update-badge": String(count), title: title, style: { position: "relative", display: "inline-flex" } }, icon,
+    h("span", { "aria-hidden": "true", style: { position: "absolute", top: -2, right: -3, width: 8, height: 8, borderRadius: 4,
+      background: "var(--dsw-alias-color-danger, #e5484d)", boxShadow: "0 0 0 1.5px var(--dsw-alias-bg-base, #fff)" } }));
+}
+/** Set in apply(): the panel entry renders before or after the center exists. */
+var CenterRef = { current: null, locale: null };
+
+function currentLocale(ctx) {
+ try { var l = ctx.locale.getLocale(); return (l && (l.active || l.id)) || "zh"; } catch (e) { return "zh"; } }
 
 // Set by the host half (index.js) only when the app ships this center built in and says so in the row config.
 function readOfficial() { try { var g = globalThis.__VDC_OFFICIAL__; return !!(g && g.official === true); } catch (e) { return false; } }
@@ -136,6 +162,8 @@ function apply(ctx) {
     },
     renderMarket: function () { try { var m = ctx.reflect && ctx.reflect.get && ctx.reflect.get("market"); return m && m.render ? m.render() : null; } catch (e) { return null; } }
   });
+  CenterRef.current = Center;
+  CenterRef.locale = function () { return currentLocale(ctx); };
   var Panel = function () { return React.createElement(Center); };
 
   ctx.effect(function () { return ctx.locale.register("vibedevCenter", { zh: {}, en: {} }); }, "vibedev-center: dictionaries");
@@ -148,8 +176,10 @@ function apply(ctx) {
       name: "sidebar.panellist", id: PANEL_ID, order: 5,
       // Spelled out on purpose: a bare "VibeDev" sits next to the brand name and is easy to miss (a user did).
       label: function () { return STR[pick(currentLocale(ctx))].title; }, locale: "vibedevCenter"
-    }, function (p) { return PanelIcon((p && p.size) || 18); });
+    }, PanelEntry);
   });
+  // One check at app start (see ui.js "one check at app start"); the page reuses it if it opens within a minute.
+  setTimeout(function () { try { Center.startup(); } catch (e) {} }, 1500);
   // Built into the app (VibeDev Next): one card in the Plugins page's Official group. Its page opens the center itself.
   // A user's own install never sets the global, so DeepSeek Harness keeps the plain sidebar entry and nothing else.
   if (OFFICIAL) {
